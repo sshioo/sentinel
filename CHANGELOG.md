@@ -46,6 +46,16 @@ muestras de demo maliciosas siguen en peligro.
   otro: «Activar protección» no hacía nada al abrir Sentinel con `main.py`.
 - El watcher seguía en bucle después de detenerlo.
 
+### Instalador
+
+- `Sentinel-Setup-<versión>.exe`: se instala sin Python ni permisos de
+  administrador, con accesos directos a Sentinel y a «Sentinel (demo)».
+- Informes, caché y `.env` van a `%LOCALAPPDATA%\Sentinel` cuando se ejecuta
+  instalado.
+- Empaquetado, Sentinel.exe se relanza como trabajador de capa.
+- La cadena EICAR de la regla YARA está en hexadecimal, para que el antivirus
+  no marque Sentinel como archivo de prueba.
+
 ### Para desarrollar
 
 - `install.bat`, `run.bat` y `demo.bat`.

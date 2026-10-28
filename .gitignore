@@ -9,5 +9,7 @@ samples/
 rules/capa/
 rules/capa-sigs/
 dist/
+build/
+packaging/version_info.txt
 *.log
 .pytest_cache/

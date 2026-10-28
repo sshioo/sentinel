@@ -22,13 +22,13 @@ import json
 import os
 from pathlib import Path
 
+from config import ENV_FILE, REPORTS_DIR
+
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(ENV_FILE)
 except ImportError:
     pass
-
-from config import REPORTS_DIR
 
 CACHE_PATH = REPORTS_DIR / ".ai_cache.json"
 MAX_SNIPPET_CHARS = 6000

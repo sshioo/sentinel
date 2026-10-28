@@ -20,7 +20,8 @@ except ImportError:
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    from config import ENV_FILE
+    load_dotenv(ENV_FILE)
 except ImportError:
     pass
 

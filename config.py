@@ -1,8 +1,16 @@
 import os
+import sys
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parent
 VERSION = "1.2.0-beta.1"
+
+# Empaquetado con PyInstaller, el código y las reglas viven en una carpeta de
+# solo lectura (Program Files). Informes, caché y .env van a la carpeta del
+# usuario. Desde el código fuente, ambas son la carpeta del proyecto.
+FROZEN = getattr(sys, "frozen", False)
+PROJECT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+USER_DIR = (Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Sentinel") if FROZEN else PROJECT_DIR
+ENV_FILE = USER_DIR / ".env"
 WATCH_DIR = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Downloads"
 
 CODE_EXTENSIONS = {
@@ -603,7 +611,7 @@ CAPA_RULES_DIR = PROJECT_DIR / "rules" / "capa"
 CAPA_SIGS_DIR = PROJECT_DIR / "rules" / "capa-sigs"
 CAPA_MAX_BYTES = 16 * 1024 * 1024
 CAPA_TIMEOUT_S = 120
-ANALYSIS_CACHE_DIR = PROJECT_DIR / "reports" / "cache"
+ANALYSIS_CACHE_DIR = USER_DIR / "reports" / "cache"
 SIGNATURE_TIMEOUT_S = 25
 
 PE_SUSPICIOUS_SECTIONS = {
@@ -732,7 +740,7 @@ VT_RATE_LIMIT_PER_MIN = 4
 VT_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 VT_TIMEOUT_S = 30
 
-REPORTS_DIR = PROJECT_DIR / "reports" / "out"
+REPORTS_DIR = USER_DIR / "reports" / "out"
 
 STABLE_MAX_RETRIES = 3
 

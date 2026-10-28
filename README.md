@@ -7,7 +7,20 @@ varios motores locales y da un veredicto claro (**Seguro**, **Revisar** o
 
 Versión actual: **1.2.0-beta.1**. Los cambios están en `CHANGELOG.md`.
 
-## Empezar en dos pasos
+## Instalar (sin Python)
+
+Descarga `Sentinel-Setup-<versión>.exe` de la página de *Releases* y ábrelo. No
+pide permisos de administrador: se instala en tu usuario, crea un acceso
+directo en el escritorio y otro en el menú Inicio, «Sentinel (demo)», que
+analiza seis muestras inocuas.
+
+El instalador no está firmado, así que Windows puede mostrar «Windows protegió
+tu PC». Pulsa **Más información → Ejecutar de todas formas**.
+
+Tus informes, la caché y el archivo `.env` con las claves opcionales quedan en
+`%LOCALAPPDATA%\Sentinel`. Desinstalar Sentinel no los borra.
+
+## Desde el código fuente
 
 Requisitos: Windows 10/11 y Python 3.10 o superior (probado en 3.12.10).
 
@@ -128,7 +141,12 @@ completo. Las respuestas se guardan en `reports/out/.ai_cache.json`.
 .venv\Scripts\python tools\run_tests.py      siete suites
 .venv\Scripts\python tools\selfcheck.py      estado del entorno
 .venv\Scripts\python tools\package_beta.py   ZIP de la beta, sin .env
+.venv\Scripts\python packaging\build.py      Sentinel.exe e instalador
 ```
+
+`packaging/build.py` necesita PyInstaller (`pip install pyinstaller`) y, para el
+instalador, Inno Setup 6 (`winget install JRSoftware.InnoSetup`). Deja la
+aplicación en `dist/Sentinel/` y el instalador en `dist/`.
 
 Guía para colaborar en `CONTRIBUTING.md`.
 

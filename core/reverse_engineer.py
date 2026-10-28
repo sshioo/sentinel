@@ -7,8 +7,10 @@ capacidades de CAPA_CATEGORIES; el resto se guarda como comportamiento observado
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from config import (
@@ -19,6 +21,7 @@ from config import (
     CAPA_RULES_DIR,
     CAPA_SIGS_DIR,
     CAPA_TIMEOUT_S,
+    FROZEN,
     MAX_SNIPPET_LEN,
     SEVERITY_SCORE,
 )
@@ -55,20 +58,32 @@ def analyze(path, sha256, skip_reason=None):
 
 
 def _run_capa(path):
-    cmd = [sys.executable, "-m", "capa.main", "-j", "-q",
-           "-r", str(CAPA_RULES_DIR), "-s", str(CAPA_SIGS_DIR), str(path)]
+    args = ["-j", "-q", "-r", str(CAPA_RULES_DIR), "-s", str(CAPA_SIGS_DIR), str(path)]
+    out_file = None
+    if FROZEN:
+        # Sin intérprete de Python a mano: Sentinel.exe se relanza como
+        # trabajador de capa (ver main.py) y deja el JSON en un archivo.
+        fd, out_file = tempfile.mkstemp(prefix="sentinel-capa-", suffix=".json")
+        os.close(fd)
+        cmd = [sys.executable, "--capa-worker", out_file, *args]
+    else:
+        cmd = [sys.executable, "-m", "capa.main", *args]
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=CAPA_TIMEOUT_S,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        raw = Path(out_file).read_bytes() if out_file else proc.stdout
     except subprocess.TimeoutExpired:
         return None, f"capa superó {CAPA_TIMEOUT_S} s"
     except OSError as exc:
         return None, str(exc)
+    finally:
+        if out_file:
+            Path(out_file).unlink(missing_ok=True)
     if proc.returncode != 0:
         tail = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()[-1:] or ["sin detalle"]
         return None, f"capa terminó con código {proc.returncode}: {tail[0][:160]}"
     try:
-        doc = json.loads(proc.stdout)
+        doc = json.loads(raw)
     except ValueError as exc:
         return None, f"salida de capa ilegible: {exc}"
 

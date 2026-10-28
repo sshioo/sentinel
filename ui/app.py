@@ -10,14 +10,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import customtkinter as ctk
 from tkinter import filedialog
 
+from config import GUI_POLL_MS, PROJECT_DIR, REPORTS_DIR, WATCH_DIR
+
 try:
     from PIL import Image
-    _LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "logo.png"
+    _LOGO_PATH = PROJECT_DIR / "assets" / "logo.png"
     _LOGO = Image.open(_LOGO_PATH) if _LOGO_PATH.exists() else None
 except Exception:
     _LOGO = None
-
-from config import GUI_POLL_MS, REPORTS_DIR, WATCH_DIR
 from core import iocs as iocs_mod
 from core import tracer
 from core.analyzer import analyze
@@ -127,6 +127,10 @@ class SentinelApp(ctk.CTk):
         self.geometry("1320x820")
         self.minsize(1180, 720)
         self.configure(fg_color=T.BG)
+        icon = PROJECT_DIR / "assets" / "sentinel.ico"
+        if icon.exists():
+            # CustomTkinter pone su icono a los ~200 ms; el nuestro va después.
+            self.after(300, lambda: self.iconbitmap(str(icon)))
 
         self.queue = queue.Queue()
         self.watcher = None
