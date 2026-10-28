@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sentinel — Consola de análisis de malware</title>
+<meta name="description" content="Sentinel analiza código y binarios con seis motores. Revisa Descargas de forma continua y cualquier otro archivo a mano y devuelve un veredicto con score, indicadores y mapeo MITRE ATT&amp;CK. El código se analiza como árbol sintáctico; solo el trazador lo ejecuta, en un intérprete instrumentado y no en un sandbox.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230E0F12'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23E8A33D' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23E8A33D'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A0B0E;
+  --surface:#121419;
+  --elevated:#1A1D24;
+  --border:#2A2E38;
+  --primary:#E8A33D;
+  --primary-hover:#F7BD5E;
+  --primary-active:#CC892A;
+  --on-primary:#17130D;
+  --text:#F4F1E8;
+  --text-2:#A1A6B3;
+  --text-3:#7D828F;
+  --success:#4CCB91;
+  --danger:#FF626C;
+  --info:#69B9F5;
+  --danger-bg:#321B20;
+  --info-bg:#172735;
+  --success-bg:#14271F;
+  --sans:"Inter",-apple-system,"Segoe UI",sans-serif;
+  --display:"Space Grotesk","Inter",sans-serif;
+  --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  --r-sm:6px; --r-md:10px; --r-lg:16px;
+  --maxw:1180px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--text);font-family:var(--sans);
+  font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+::selection{background:var(--primary);color:var(--on-primary)}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--primary);outline-offset:3px;border-radius:2px}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+.mono{font-family:var(--mono)}
+#scrollbar{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,var(--primary),var(--primary-hover));z-index:60}
+
+/* ── nav ── */
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:50;
+  background:rgba(10,11,14,.78);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--border);
+}
+.nav-in{max-width:var(--maxw);margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:32px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;letter-spacing:.04em}
+.brand small{font-family:var(--mono);font-size:10px;color:var(--primary);letter-spacing:.14em;display:block;font-weight:500}
+.nav-links{display:flex;gap:28px;margin-left:auto}
+.nav-links a{font-size:14px;color:var(--text-2);position:relative;transition:color .2s}
+.nav-links a:hover{color:var(--text)}
+.nav-links a::after{content:"";position:absolute;left:0;bottom:-6px;height:2px;width:0;background:var(--primary);transition:width .25s}
+.nav-links a:hover::after{width:100%}
+.nav-cta{
+  margin-left:24px;font-family:var(--mono);font-size:13px;font-weight:700;
+  background:var(--primary);color:var(--on-primary);
+  padding:9px 18px;border-radius:var(--r-sm);border:0;cursor:pointer;
+  box-shadow:0 0 0 0 rgba(232,163,61,.5);transition:background .2s,box-shadow .3s;
+}
+.nav-cta:hover{background:var(--primary-hover);box-shadow:0 0 24px 2px rgba(232,163,61,.35)}
+@media(max-width:860px){.nav-links{display:none}.nav-cta{margin-left:auto}}
+
+/* ── hero ── */
+.hero{position:relative;min-height:100svh;display:flex;align-items:center;padding:120px 0 90px;overflow:hidden;isolation:isolate}
+.hero-bg{position:absolute;inset:0;z-index:-1;pointer-events:none}
+.hero-bg .grid{
+  position:absolute;inset:0;
+  background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);
+  background-size:64px 64px;opacity:.45;
+  mask-image:radial-gradient(ellipse 80% 75% at 70% 40%,#000 0%,transparent 75%);
+  -webkit-mask-image:radial-gradient(ellipse 80% 75% at 70% 40%,#000 0%,transparent 75%);
+}
+.hero-bg .sweep{
+  position:absolute;top:50%;right:-18%;width:min(900px,120vw);aspect-ratio:1;transform:translateY(-50%);
+  border-radius:50%;
+  background:conic-gradient(from 0deg,transparent 0deg,rgba(232,163,61,.20) 40deg,transparent 60deg);
+  animation:spin 7s linear infinite;
+  -webkit-mask-image:radial-gradient(circle,#000 30%,transparent 70%);mask-image:radial-gradient(circle,#000 30%,transparent 70%);
+}
+.hero-bg .rings{
+  position:absolute;top:50%;right:-18%;width:min(900px,120vw);aspect-ratio:1;transform:translateY(-50%);
+  border-radius:50%;border:1px solid rgba(232,163,61,.12);
+  box-shadow:inset 0 0 0 90px transparent,inset 0 0 0 91px rgba(232,163,61,.08),inset 0 0 0 220px transparent,inset 0 0 0 221px rgba(232,163,61,.06);
+}
+@keyframes spin{to{transform:translateY(-50%) rotate(360deg)}}
+.hero-grid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:56px;align-items:center}
+@media(max-width:960px){.hero-grid{grid-template-columns:1fr}}
+.kicker{
+  font-family:var(--mono);font-size:12px;font-weight:500;color:var(--primary);
+  letter-spacing:.18em;text-transform:uppercase;display:inline-flex;align-items:center;gap:10px;
+}
+.kicker::before{content:"";width:22px;height:1px;background:var(--primary)}
+h1{
+  font-size:clamp(46px,7.2vw,98px);font-family:var(--display);line-height:.98;font-weight:700;letter-spacing:-.035em;margin:22px 0 4px;
+}
+h1 .amber{
+  background:linear-gradient(100deg,var(--primary) 0%,var(--primary-hover) 45%,#FFD58A 60%,var(--primary) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:shine 5s ease-in-out infinite;
+}
+@keyframes shine{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+.hero-sub{font-size:18px;color:var(--text-2);max-width:52ch;margin-top:22px}
+.hero-actions{display:flex;gap:14px;margin-top:36px;flex-wrap:wrap}
+.btn{
+  display:inline-flex;align-items:center;gap:10px;
+  font-family:var(--mono);font-size:15px;font-weight:700;
+  padding:16px 28px;border-radius:var(--r-sm);border:1px solid transparent;
+  cursor:pointer;transition:background .2s,border-color .2s,transform .15s,box-shadow .3s;
+}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
+.btn-primary:hover{background:var(--primary-hover);border-color:var(--primary-hover);box-shadow:0 0 32px rgba(232,163,61,.35)}
+.btn-ghost{background:transparent;color:var(--text);border-color:var(--border)}
+.btn-ghost:hover{background:var(--elevated);border-color:var(--text-3)}
+.btn-dir{font-style:normal;opacity:.75}
+
+/* reveal de entrada */
+.rise{opacity:0;transform:translateY(22px);animation:rise .8s cubic-bezier(.2,.7,.2,1) forwards}
+@keyframes rise{to{opacity:1;transform:none}}
+.d1{animation-delay:.05s}.d2{animation-delay:.15s}.d3{animation-delay:.3s}.d4{animation-delay:.42s}.d5{animation-delay:.55s}
+
+/* ── marquee de motores ── */
+.marquee{background:var(--primary);color:var(--on-primary);overflow:hidden;border-block:1px solid var(--primary-active)}
+.marquee-track{display:flex;width:max-content;animation:marq 28s linear infinite}
+.marquee-track span{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:.08em;text-transform:uppercase;padding:16px 26px;white-space:nowrap}
+.marquee-track span::after{content:"✕";margin-left:52px;opacity:.5}
+@keyframes marq{to{transform:translateX(-50%)}}
+
+/* ── métricas ── */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:70px 0 0}
+@media(max-width:760px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:28px 24px;transition:border-color .3s,transform .3s}
+.stat:hover{border-color:var(--primary);transform:translateY(-3px)}
+.stat b{display:block;font-family:var(--mono);font-weight:700;font-size:clamp(34px,4vw,52px);letter-spacing:-.03em;line-height:1}
+.stat span{display:block;margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--text-2);letter-spacing:.1em;text-transform:uppercase}
+.c-amber{color:var(--primary)}.c-ok{color:var(--success)}.c-info{color:var(--info)}
+
+/* ── secciones ── */
+section{padding:120px 0}
+.sec-head{display:flex;align-items:center;gap:18px;margin-bottom:18px}
+.sec-num{font-family:var(--mono);font-size:12px;color:var(--primary);letter-spacing:.14em;padding:4px 10px;border:1px solid rgba(232,163,61,.35);border-radius:4px}
+.sec-head h2{font-family:var(--display);font-size:clamp(34px,5vw,60px);font-weight:700;letter-spacing:-.035em;line-height:1}
+.sec-lead{color:var(--text-2);max-width:62ch;margin-bottom:56px;font-size:17px}
+.reveal{opacity:0;transform:translateY(28px);transition:opacity .8s cubic-bezier(.2,.7,.2,1),transform .8s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1;transform:none}
+
+/* ── módulos (bento) ── */
+.modules{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+.mod{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  padding:32px 30px;position:relative;overflow:hidden;isolation:isolate;
+  transition:border-color .3s,transform .3s;
+}
+.mod::before{
+  content:"";position:absolute;inset:0;z-index:-1;opacity:0;transition:opacity .4s;
+  background:radial-gradient(420px circle at var(--mx,50%) var(--my,0%),rgba(232,163,61,.13),transparent 60%);
+}
+.mod:hover{border-color:rgba(232,163,61,.5);transform:translateY(-4px)}
+.mod:hover::before{opacity:1}
+.mod .tag{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--primary);text-transform:uppercase}
+.mod h3{font-family:var(--display);font-size:22px;font-weight:600;margin:14px 0 10px;letter-spacing:-.02em}
+.mod p{font-size:15px;color:var(--text-2)}
+.mod .glyph{position:absolute;top:26px;right:28px;font-family:var(--mono);font-size:24px;color:var(--border);transition:color .3s,transform .4s}
+.mod:hover .glyph{color:var(--primary);transform:rotate(12deg) scale(1.15)}
+.feature{grid-column:span 7;min-height:300px;display:flex;flex-direction:column;justify-content:flex-end}
+.feature h3{font-size:clamp(26px,3vw,34px)}
+.m-w12{grid-column:span 12}.m-w5{grid-column:span 5}.m-w4{grid-column:span 4}.m-w6{grid-column:span 6}.m-w7{grid-column:span 7}.m-w8{grid-column:span 8}
+@media(max-width:860px){.modules .mod{grid-column:1/-1 !important}}
+.verdict{margin-top:20px;border:1px solid var(--border);border-radius:var(--r-sm);padding:14px 16px;font-family:var(--mono);font-size:12.5px;line-height:1.9;background:var(--bg)}
+.verdict .ln{color:var(--text-3)}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;letter-spacing:.06em}
+.b-danger{color:var(--danger);background:var(--danger-bg)}
+.b-outline{color:var(--success);border:1px solid var(--success)}
+.b-info{color:var(--info);background:var(--info-bg)}
+
+/* ── pipeline ── */
+.pipe-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;position:relative}
+.pipe-line{position:absolute;top:26px;left:26px;right:26px;height:2px;background:var(--border);overflow:hidden}
+.pipe-line::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,var(--primary),var(--primary-hover));transform:scaleX(0);transform-origin:left;transition:transform 1.6s cubic-bezier(.2,.7,.2,1) .2s}
+.pipe-grid.in .pipe-line::after{transform:scaleX(1)}
+@media(max-width:860px){.pipe-grid{grid-template-columns:1fr}.pipe-line{display:none}}
+.step-n{
+  width:52px;height:52px;border-radius:50%;background:var(--bg);border:2px solid var(--primary);
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:15px;color:var(--primary);
+  position:relative;z-index:1;transition:background .3s,color .3s,box-shadow .3s;
+}
+.step:hover .step-n{background:var(--primary);color:var(--on-primary);box-shadow:0 0 24px rgba(232,163,61,.4)}
+.step h3{font-family:var(--display);font-size:19px;font-weight:600;margin:24px 0 8px}
+.step p{font-size:14.5px;color:var(--text-2)}
+.step .mono-hint{font-family:var(--mono);font-size:11px;color:var(--text-3);margin-top:12px}
+
+/* ── motores ── */
+.engines{border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);overflow:hidden}
+.eng-row{display:grid;grid-template-columns:1.2fr 2fr auto;gap:20px;align-items:center;padding:22px 28px;border-top:1px solid var(--border);transition:background .25s,padding-left .25s}
+.eng-row:first-child{border-top:0}
+.eng-row:hover{background:var(--elevated);padding-left:34px}
+@media(max-width:700px){.eng-row{grid-template-columns:1fr;gap:8px}}
+.eng-name{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text)}
+.eng-desc{font-size:14px;color:var(--text-2)}
+.eng-status{font-family:var(--mono);font-size:11px;letter-spacing:.08em}
+
+/* ── descarga ── */
+#descarga{padding-top:40px}
+.panel{
+  position:relative;overflow:hidden;isolation:isolate;text-align:center;
+  border-radius:var(--r-lg);padding:88px 40px;background:var(--surface);
+  border:1px solid transparent;
+  background-image:linear-gradient(var(--surface),var(--surface)),linear-gradient(120deg,var(--primary),transparent 35%,transparent 65%,var(--primary));
+  background-origin:border-box;background-clip:padding-box,border-box;
+}
+.panel::before{
+  content:"";position:absolute;inset:0;z-index:-1;
+  background:radial-gradient(ellipse 60% 90% at 50% 0%,rgba(232,163,61,.18),transparent 70%);
+}
+.panel::after{
+  content:"";position:absolute;inset:0;z-index:-1;opacity:.3;
+  background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);
+  background-size:64px 64px;mask-image:radial-gradient(ellipse 70% 60% at 50% 0%,#000,transparent 75%);
+  -webkit-mask-image:radial-gradient(ellipse 70% 60% at 50% 0%,#000,transparent 75%);
+}
+.panel h2{font-family:var(--display);font-size:clamp(34px,5vw,58px);font-weight:700;letter-spacing:-.035em;line-height:1.02;margin-top:18px}
+.panel p{color:var(--text-2);max-width:56ch;margin:20px auto 0;font-size:17px}
+.panel .btn{margin-top:38px;font-size:16px;padding:19px 38px}
+.dl-meta{margin-top:26px;font-family:var(--mono);font-size:12px;color:var(--text-3);letter-spacing:.05em}
+
+/* toast */
+#toast{
+  position:fixed;left:50%;bottom:34px;transform:translate(-50%,90px);
+  background:var(--elevated);border:1px solid var(--primary);color:var(--text);border-radius:var(--r-md);
+  padding:14px 22px;font-family:var(--mono);font-size:13px;display:flex;align-items:center;gap:14px;
+  box-shadow:0 16px 44px rgba(0,0,0,.6);transition:transform .4s cubic-bezier(.2,.9,.3,1.2),opacity .3s;
+  opacity:0;z-index:70;max-width:calc(100vw - 40px);
+}
+#toast.show{transform:translate(-50%,0);opacity:1}
+#toast .b{color:var(--primary);font-weight:700}
+#toast button{background:none;border:0;color:var(--text-2);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px}
+#toast button:hover{color:var(--text);background:var(--border)}
+
+/* ── footer ── */
+footer{border-top:1px solid var(--border);padding:40px 0 46px;color:var(--text-3);font-family:var(--mono);font-size:12px}
+.foot{display:flex;gap:24px;flex-wrap:wrap;align-items:center}
+.foot .right{margin-left:auto;letter-spacing:.06em}
+@media(max-width:700px){.foot .right{margin-left:0}}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important;scroll-behavior:auto !important}
+  .rise,.reveal{opacity:1;transform:none}
+  .marquee-track,.hero-bg .sweep{animation:none}
+}
+</style>
+</head>
+<body>
+
+<div id="scrollbar" aria-hidden="true"></div>
+
+<nav aria-label="principal">
+  <div class="nav-in">
+    <a class="brand" href="#" aria-label="Sentinel, inicio">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="10" fill="none" stroke="#E8A33D" stroke-width="2.5"/>
+        <circle cx="16" cy="16" r="3.2" fill="#E8A33D"/>
+      </svg>
+      SENTINEL<small>ANALYSIS CONSOLE</small>
+    </a>
+    <div class="nav-links">
+      <a href="#funciones">Funciones</a>
+      <a href="#pipeline">Cómo funciona</a>
+      <a href="#motores">Motores</a>
+    </div>
+    <button type="button" class="nav-cta" data-dl aria-label="Descargar Sentinel">Descargar</button>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-bg" aria-hidden="true">
+    <div class="grid"></div>
+    <div class="rings"></div>
+    <div class="sweep"></div>
+  </div>
+  <div class="wrap hero-grid">
+    <div>
+      <span class="kicker rise d1">vigilancia · análisis · veredicto</span>
+      <h1 class="rise d2">Tus descargas <span class="amber">no se fían de nada.</span></h1>
+      <p class="hero-sub rise d3">
+        Cada archivo que analiza Sentinel pasa por seis motores. Cada hallazgo
+        indica su regla, su confianza y su técnica MITRE ATT&amp;CK.
+      </p>
+      <div class="hero-actions rise d4">
+        <button type="button" class="btn btn-primary" data-dl>
+          Descargar Sentinel <i class="btn-dir" aria-hidden="true">↓</i>
+        </button>
+        <a class="btn btn-ghost" href="#pipeline">Cómo funciona</a>
+      </div>
+    </div>
+
+    <div class="rise d5">
+      <iframe class="pipe-frame" src="scanner.html" title="Central de escaneo de Sentinel: cada archivo sale en verde, amarillo o rojo" loading="lazy" style="width:100%;height:440px;border:0;background:transparent"></iframe>
+    </div>
+  </div>
+</header>
+
+<div class="marquee" aria-hidden="true">
+  <div class="marquee-track">
+    <span>AST + trazador</span><span>YARA</span><span>PE / pefile</span><span>PDF / pypdf</span><span>Office / oletools</span><span>VirusTotal</span>
+    <span>AST + trazador</span><span>YARA</span><span>PE / pefile</span><span>PDF / pypdf</span><span>Office / oletools</span><span>VirusTotal</span>
+  </div>
+</div>
+
+<section id="funciones" style="padding-top:20px">
+  <div class="wrap">
+    <div class="stats-grid">
+      <div class="stat reveal"><b class="c-amber" data-count="6">0</b><span>motores de análisis</span></div>
+      <div class="stat reveal"><b class="c-info">ZIP</b><span>contenedores revisados sin extraer</span></div>
+      <div class="stat reveal"><b class="c-info">MITRE</b><span>técnicas ATT&amp;CK mapeadas</span></div>
+      <div class="stat reveal"><b class="c-ok" data-count="100">0</b><span>score de riesgo 0–100</span></div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:110px">
+  <div class="wrap">
+    <div class="sec-head reveal"><span class="sec-num">01</span><h2>La consola al detalle</h2></div>
+    <p class="sec-lead reveal">Cada módulo cumple una función forense concreta. Dato primero, decoración nunca.</p>
+
+    <div class="modules" id="modules">
+      <article class="mod feature reveal">
+        <span class="glyph" aria-hidden="true">◉</span>
+        <span class="tag">supervisión</span>
+        <h3>Vigilancia en tiempo real</h3>
+        <p>Un observador revisa de forma continua la carpeta Descargas. Cada archivo nuevo entra en
+        la cola, se clasifica por tipo (código, binario o ignorable) y aparece en la tabla con hora,
+        score y estado textual. Cualquier otro archivo se analiza a mano.</p>
+      </article>
+
+      <article class="mod m-w5 reveal">
+        <span class="glyph" aria-hidden="true">{ }</span>
+        <span class="tag">análisis estático</span>
+        <h3>AST línea por línea</h3>
+        <p>El código Python nunca se ejecuta. Se recorre el árbol sintáctico y
+        <span class="mono">eval</span>, <span class="mono">exec</span>, llamadas al sistema,
+        red y borrado de ficheros se detectan con el número de línea exacto.</p>
+      </article>
+
+      <article class="mod m-w5 reveal">
+        <span class="glyph" aria-hidden="true">▤</span>
+        <span class="tag">multi-formato</span>
+        <h3>Binarios y documentos</h3>
+        <p>Firma mágica, cabeceras PE, JavaScript incrustado en PDF, acciones automáticas
+        y macros VBA en Office. La entropía señala datos ofuscados en un binario de aspecto inocente.</p>
+        <div class="verdict" aria-hidden="true">
+          <div><span class="ln">L  414</span>  [alto]   javascript/JS en PDF</div>
+          <div><span class="ln">est.</span>  <span class="badge b-danger">AMENAZA</span>  score 68/100</div>
+        </div>
+      </article>
+
+      <article class="mod m-w7 reveal">
+        <span class="glyph" aria-hidden="true">»</span>
+        <span class="tag">comportamiento</span>
+        <h3>Trazador conductual</h3>
+        <p>El código se ejecuta en un intérprete instrumentado que registra cada llamada peligrosa como
+        evento. Aísla builtins, no el proceso: no es un sandbox. No analices muestras reales aquí.
+        La traza alimenta el score final.</p>
+      </article>
+
+      <article class="mod m-w4 reveal">
+        <span class="glyph" aria-hidden="true">⊕</span>
+        <span class="tag">indicadores</span>
+        <h3>Extracción de IOCs</h3>
+        <p>IP, dominios, URLs, correos y hashes que menciona la muestra, catalogados y listos para compartir.</p>
+      </article>
+
+      <article class="mod m-w4 reveal">
+        <span class="glyph" aria-hidden="true">↧</span>
+        <span class="tag">informe</span>
+        <h3>Informe HTML</h3>
+        <p>Un dossier autocontenido por análisis: score, hallazgos con línea y severidad, mapeo MITRE,
+        IOCs y traza conductual.</p>
+      </article>
+
+      <article class="mod m-w4 reveal">
+        <span class="glyph" aria-hidden="true">⇄</span>
+        <span class="tag">motor online</span>
+        <h3>Capa VirusTotal</h3>
+        <p>Opcional: con tu clave API gratuita, cada binario se consulta por SHA-256. Sin clave, la consola
+        funciona igual de completa en local.</p>
+      </article>
+
+      <article class="mod m-w12 reveal">
+        <span class="glyph" aria-hidden="true">⌘</span>
+        <span class="tag">disfraces y contenedores</span>
+        <h3>Lo que intenta pasar por documento</h3>
+        <p>Detecta <span class="mono">factura.pdf.exe</span> (doble extensión), caracteres de sentido
+        invertido en el nombre (RLO) y ejecutables o scripts dentro de un ZIP, revisados sin extraer el
+        paquete. Cada hallazgo indica su confianza: alta, media o baja.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="pipeline" style="background:var(--surface);border-block:1px solid var(--border)">
+  <div class="wrap">
+    <div class="sec-head reveal"><span class="sec-num">02</span><h2>Cómo decide</h2></div>
+    <p class="sec-lead reveal">Cuatro fases, de la llegada del archivo al veredicto. Todo en local. Solo sale un hash si activas VirusTotal.</p>
+
+    <div class="pipe-grid reveal" id="pipe">
+      <div class="pipe-line" aria-hidden="true"></div>
+      <div class="step">
+        <div class="step-n">01</div>
+        <h3>Observación</h3>
+        <p>El sistema de archivos notifica en cuanto algo aterriza en Descargas. Nada se queda fuera: ejecutables, documentos, scripts y comprimidos. Para cualquier otra ruta, basta con elegir el archivo.</p>
+        <div class="mono-hint">watchdog · sistema de archivos</div>
+      </div>
+      <div class="step">
+        <div class="step-n">02</div>
+        <h3>Clasificación</h3>
+        <p>Extensión, firma mágica y nombre. Un <span class="mono">.py</span> va a análisis de código; un <span class="mono">.exe</span> o <span class="mono">.pdf</span>, a los motores binarios. Las descargas a medias (<span class="mono">.crdownload</span>, <span class="mono">.part</span>) se ignoran.</p>
+        <div class="mono-hint">dispatcher · firma + extensión</div>
+      </div>
+      <div class="step">
+        <div class="step-n">03</div>
+        <h3>Análisis</h3>
+        <p>Reglas YARA, cabeceras PE, macros VBA, JavaScript en PDF, entropía, marcadores de script y trazado AST. Cada hallazgo pesa según su severidad.</p>
+        <div class="mono-hint">6 motores · severidad ponderada</div>
+      </div>
+      <div class="step">
+        <div class="step-n">04</div>
+        <h3>Veredicto</h3>
+        <p>Score de 0 a 100, estado (benigno, pendiente o amenaza), hallazgos anotados con MITRE ATT&amp;CK e informe HTML listo para exportar.</p>
+        <div class="mono-hint">score 0–100 · informe autocontenido</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="motores">
+  <div class="wrap">
+    <div class="sec-head reveal"><span class="sec-num">03</span><h2>Seis motores, un veredicto</h2></div>
+    <p class="sec-lead reveal">Los motores que componen el análisis y lo que aporta cada uno.</p>
+
+    <div class="engines reveal">
+      <div class="eng-row">
+        <span class="eng-name">AST + trazador</span>
+        <span class="eng-desc">Recorre el árbol sintáctico y ejecuta en un intérprete instrumentado que aísla builtins, no el proceso: eval, exec, os.system, subprocess, sockets, escrituras y borrados.</span>
+        <span class="eng-status badge b-outline">NÚCLEO</span>
+      </div>
+      <div class="eng-row">
+        <span class="eng-name">YARA</span>
+        <span class="eng-desc">Reglas sobre archivos y memoria: patrones de PowerShell, descarga y ejecución, y contextos de ejecución de código sospechoso.</span>
+        <span class="eng-status badge b-outline">NÚCLEO</span>
+      </div>
+      <div class="eng-row">
+        <span class="eng-name">PE / pefile</span>
+        <span class="eng-desc">Cabeceras ejecutables de Windows, secciones con entropía anómala y tabla de importaciones sospechosas.</span>
+        <span class="eng-status badge b-outline">NÚCLEO</span>
+      </div>
+      <div class="eng-row">
+        <span class="eng-name">PDF / pypdf</span>
+        <span class="eng-desc">JavaScript incrustado, acciones automáticas y lanzamiento de procesos al abrir el documento.</span>
+        <span class="eng-status badge b-outline">NÚCLEO</span>
+      </div>
+      <div class="eng-row">
+        <span class="eng-name">Office / oletools</span>
+        <span class="eng-desc">Macros VBA en documentos y plantillas, con detección de la cadena macro → shell → descarga.</span>
+        <span class="eng-status badge b-outline">NÚCLEO</span>
+      </div>
+      <div class="eng-row">
+        <span class="eng-name">VirusTotal</span>
+        <span class="eng-desc">Consulta por SHA-256 contra decenas de antivirus. Activación opcional con clave API gratuita; el resto funciona en local.</span>
+        <span class="eng-status badge b-info">OPCIONAL</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="descarga">
+  <div class="wrap">
+    <div class="panel reveal">
+      <span class="kicker">v1.1 · windows · python 3.12</span>
+      <h2>Analiza cualquier archivo en tu máquina</h2>
+      <p>Sin registro ni cuentas. Sentinel analiza en tu máquina y solo comparte un hash si tú activas la capa online.</p>
+      <button type="button" class="btn btn-primary" data-dl>
+        Descargar Sentinel para Windows <i class="btn-dir" aria-hidden="true">↓</i>
+      </button>
+      <div class="dl-meta">instalador · versión 1.1 · Windows</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot">
+    <span>SENTINEL · consola de análisis de malware</span>
+    <span class="right">demo académica · stand de ingeniería</span>
+  </div>
+</footer>
+
+<div id="toast" role="status" aria-live="polite">
+  <span class="b">▮</span>
+  <span id="toast-msg">La distribución pública llega con el lanzamiento.</span>
+  <button type="button" onclick="toastClose()" aria-label="Cerrar aviso">✕</button>
+</div>
+
+<script>
+/* barra de progreso de scroll */
+const sb = document.getElementById("scrollbar");
+addEventListener("scroll", ()=>{
+  const h = document.documentElement;
+  const max = h.scrollHeight - h.clientHeight;
+  sb.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + "%";
+}, {passive:true});
+
+/* reveal on scroll */
+const io = new IntersectionObserver(es => es.forEach(e => {
+  if(e.isIntersecting){ e.target.classList.add("in"); io.unobserve(e.target); }
+}), {threshold:.15});
+document.querySelectorAll(".reveal").forEach(el => io.observe(el));
+
+/* contadores */
+const cio = new IntersectionObserver(es => es.forEach(e => {
+  if(!e.isIntersecting) return;
+  cio.unobserve(e.target);
+  const el = e.target, end = parseInt(el.dataset.count);
+  if(!isNaN(end)) el.textContent = String(end);
+}), {threshold:.4});
+document.querySelectorAll("[data-count]").forEach(el => cio.observe(el));
+
+/* brillo que sigue al cursor en los módulos */
+document.querySelectorAll(".mod").forEach(card => {
+  card.addEventListener("pointermove", e => {
+    const r = card.getBoundingClientRect();
+    card.style.setProperty("--mx", (e.clientX - r.left) + "px");
+    card.style.setProperty("--my", (e.clientY - r.top) + "px");
+  });
+});
+
+/* botón de descarga (aún no disponible) */
+const toast = document.getElementById("toast");
+let tTimer;
+function showToast(html){
+  document.getElementById("toast-msg").innerHTML = html;
+  toast.classList.add("show");
+  clearTimeout(tTimer);
+  tTimer = setTimeout(()=>toast.classList.remove("show"), 4200);
+}
+function toastClose(){ toast.classList.remove("show"); clearTimeout(tTimer); }
+document.querySelectorAll("[data-dl]").forEach(b => b.addEventListener("click", () => {
+  showToast("<b>v1.1</b>&nbsp; La distribución pública llega con el lanzamiento.");
+}));
+</script>
+</body>
+</html>

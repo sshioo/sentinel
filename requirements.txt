@@ -1,0 +1,11 @@
+watchdog~=6.0
+customtkinter~=6.0
+pillow~=12.3
+pefile~=2024.8
+pypdf~=6.19
+oletools~=0.60
+yara-python~=4.5
+capstone~=5.0
+flare-capa==10.0.0
+python-dotenv~=1.2
+requests~=2.34

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sentinel · central de escaneo</title>
+<style>
+:root{
+  --bg:#0A0B0E; --surface:#121419; --elevated:#1A1D24; --border:#2A2E38;
+  --primary:#E8A33D; --text:#F4F1E8; --text-2:#A1A6B3; --text-3:#7D828F;
+  --success:#4CCB91; --warning:#E8A33D; --danger:#FF626C;
+  --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  --sans:"Inter",-apple-system,"Segoe UI",sans-serif;
+  --ease-in:cubic-bezier(.45,0,.9,.6);
+  --ease-out:cubic-bezier(.2,.7,.2,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:transparent;color:var(--text);font-family:var(--sans)}
+body{display:flex;align-items:center;justify-content:center}
+.stage{position:relative;width:min(960px,100%);height:min(440px,100vh);overflow:hidden}
+.grid{position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:64px 64px;opacity:.45;mask-image:radial-gradient(ellipse at center,#000 30%,transparent 75%)}
+.belt{position:absolute;left:0;right:0;top:50%;height:8px;margin-top:-4px;background:linear-gradient(180deg,#22252d,#14161b);box-shadow:0 6px 14px rgba(0,0,0,.55)}
+.belt::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0 16px,rgba(232,163,61,.28) 16px 18px);animation:belt 1s linear infinite}
+@keyframes belt{to{background-position:36px 0}}
+.gate{position:absolute;left:50%;top:50%;width:150px;height:200px;margin:-100px 0 0 -75px}
+.gate .arch{position:absolute;inset:0;border:2px solid var(--border);border-bottom:none;border-radius:75px 75px 0 0;background:linear-gradient(180deg,var(--elevated),var(--surface));box-shadow:inset 0 0 26px rgba(0,0,0,.6)}
+.gate .pillar{position:absolute;bottom:0;width:14px;height:44px;background:linear-gradient(90deg,#24272f,var(--elevated),#15171c);border:1px solid var(--border)}
+.gate .pillar.l{left:-8px}.gate .pillar.r{right:-8px}
+.gate .core{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;border:2px solid var(--primary);box-shadow:0 0 28px rgba(232,163,61,.35);animation:core 2.4s ease-in-out infinite}
+@keyframes core{50%{box-shadow:0 0 42px rgba(232,163,61,.6)}}
+.glow{position:absolute;left:10px;right:10px;top:10px;bottom:10px;border-radius:70px 70px 0 0;background:radial-gradient(ellipse at 50% 50%,rgba(232,163,61,.22),transparent 70%);opacity:0;transition:opacity .35s var(--ease-out)}
+.glow.on{opacity:1}
+.beam{position:absolute;left:12px;right:12px;height:2px;top:0;background:var(--primary);box-shadow:0 0 14px var(--primary),0 0 4px #fff;opacity:0}
+.beam.on{animation:sweep 1.4s ease-in-out infinite}
+@keyframes sweep{0%{top:12px;opacity:0}12%{opacity:1}50%{top:calc(100% - 14px)}88%{opacity:1}100%{top:12px;opacity:0}}
+.floor{position:absolute;left:50%;top:50%;width:260px;height:44px;margin:-22px 0 0 -130px;border-radius:50%;background:radial-gradient(ellipse at center,rgba(0,0,0,.7),transparent 70%);transform:translateY(40px)}
+.tile{position:absolute;top:50%;left:0;width:92px;height:116px;margin:-58px 0 0 -46px;border-radius:10px;background:linear-gradient(160deg,#262a33 0%,var(--elevated) 45%,#15171c 100%);border:1px solid #33384a;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -2px 0 rgba(0,0,0,.45),0 18px 22px -10px rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;will-change:transform;overflow:hidden;transition:border-color .2s var(--ease-out),box-shadow .2s var(--ease-out)}
+.tile .fold{position:absolute;top:0;right:0;width:24px;height:24px;background:linear-gradient(225deg,#0d0f13 50%,#2a2e38 50%);border-bottom-left-radius:6px;box-shadow:-2px 2px 4px rgba(0,0,0,.5)}
+.tile .ext{font-family:var(--mono);font-size:17px;font-weight:700;letter-spacing:.02em;color:var(--text);text-shadow:0 1px 0 rgba(0,0,0,.6)}
+.tile .dot{width:10px;height:10px;border-radius:50%;background:#3a3f4d;transition:background .2s var(--ease-out),box-shadow .2s var(--ease-out)}
+.tile .sheen{position:absolute;inset:0;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.07) 50%,transparent 65%);pointer-events:none}
+.tile .scanband{position:absolute;left:0;right:0;height:26px;top:-26px;background:linear-gradient(180deg,transparent,rgba(232,163,61,.35),transparent);opacity:0;pointer-events:none}
+.tile .scanband.on{animation:band 1.3s linear infinite}
+@keyframes band{from{top:-26px}to{top:116px}}
+.tile.ok{border-color:var(--success);box-shadow:0 0 22px rgba(76,203,145,.35),0 18px 22px -10px rgba(0,0,0,.85)}
+.tile.ok .dot{background:var(--success);box-shadow:0 0 10px var(--success)}
+.tile.warn{border-color:var(--warning);box-shadow:0 0 22px rgba(232,163,61,.35),0 18px 22px -10px rgba(0,0,0,.85)}
+.tile.warn .dot{background:var(--warning);box-shadow:0 0 10px var(--warning)}
+.tile.bad{border-color:var(--danger);box-shadow:0 0 22px rgba(255,98,108,.35),0 18px 22px -10px rgba(0,0,0,.85)}
+.tile.bad .dot{background:var(--danger);box-shadow:0 0 10px var(--danger)}
+.ripple{position:absolute;left:0;top:50%;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;border:2px solid;opacity:0;pointer-events:none}
+.ripple.ok{border-color:var(--success)}.ripple.warn{border-color:var(--warning)}.ripple.bad{border-color:var(--danger)}
+.legend{position:absolute;left:0;right:0;bottom:6px;display:flex;justify-content:center;gap:28px;font-family:var(--mono);font-size:12px;color:var(--text-2);letter-spacing:.06em}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.legend i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.status{position:absolute;top:10px;left:0;right:0;text-align:center;font-family:var(--mono);font-size:12px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase}
+.status b{color:var(--primary);font-weight:700}
+@media (prefers-reduced-motion: reduce){
+  .belt::after,.gate .core,.beam.on,.tile .scanband.on{animation:none}
+  .tile,.tile .dot,.glow{transition:none}
+}
+</style>
+</head>
+<body>
+<div class="stage" role="img" aria-label="Central de escaneo de Sentinel: cada tipo de archivo permitido atraviesa el escáner y sale en verde, amarillo o rojo según el veredicto">
+  <div class="status" aria-hidden="true"></div>
+  <div class="belt" aria-hidden="true"></div>
+  <div class="floor" aria-hidden="true"></div>
+  <div class="gate" aria-hidden="true">
+    <div class="arch"></div>
+    <div class="glow"></div>
+    <div class="pillar l"></div>
+    <div class="pillar r"></div>
+    <div class="core"></div>
+    <div class="beam"></div>
+  </div>
+  <div class="legend" aria-hidden="true">
+    <span><i style="background:var(--success)"></i>limpio</span>
+    <span><i style="background:var(--warning)"></i>pendiente</span>
+    <span><i style="background:var(--danger)"></i>alerta</span>
+  </div>
+</div>
+
+<script>
+// Tipos que Sentinel reconoce (config.py: código, binarios, documentos, imágenes, comprimidos, instaladores).
+const TYPES = [
+  ".py",".js",".ts",".c",".cpp",".java",".php",".sh",".ps1",".go",".rs",".lua",
+  ".exe",".dll",".sys",".scr",".msi",".bat",".cmd",".vbs",".jse",".wsf",".jar",
+  ".zip",".rar",".7z",".gz",".tar",".png",".jpg",".gif",".bmp",".webp",".svg",
+  ".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".rtf",".iso",".img",".bin",
+  ".apk",".lnk",".hta",".cpl"
+];
+// Veredictos en secuencia: verde, amarillo, rojo, y vuelta a empezar.
+const VERDICTS = ["ok", "warn", "bad"];
+const STAGE = document.querySelector(".stage");
+const STATUS = document.querySelector(".status");
+const GLOW = document.querySelector(".glow");
+const BEAM = document.querySelector(".beam");
+const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+const DURATION = 3000;
+const GAP = 1.5;
+const TILE_W = 92;
+const SPEED_EASE = "cubic-bezier(.4,0,.6,1)";
+let index = 0;
+
+function spawn() {
+  const ext = TYPES[index % TYPES.length];
+  const verdict = VERDICTS[index % VERDICTS.length];
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  tile.innerHTML = `<span class="fold"></span><span class="sheen"></span><span class="scanband"></span><span class="ext">${ext}</span><span class="dot"></span>`;
+  STAGE.appendChild(tile);
+  STATUS.innerHTML = `escaneando <b>${ext}</b> · ${index + 1} de ${TYPES.length}`;
+  const center = STAGE.clientWidth / 2;
+  const exit = STAGE.clientWidth + 140;
+  const band = tile.querySelector(".scanband");
+
+  const motion = tile.animate(
+    [
+      { transform: "translateX(-140px) translateY(0px) rotate(-1.5deg)", offset: 0, easing: "ease-in" },
+      { transform: `translateX(${center - 150}px) translateY(0px) rotate(0deg)`, offset: 0.26, easing: SPEED_EASE },
+      { transform: `translateX(${center - 6}px) translateY(-3px) rotate(0deg)`, offset: 0.48, easing: "ease-out" },
+      { transform: `translateX(${center + 40}px) translateY(0px) rotate(0.6deg)`, offset: 0.62, easing: "ease-in" },
+      { transform: `translateX(${exit}px) translateY(0px) rotate(0deg)`, offset: 1 },
+    ],
+    { duration: DURATION, fill: "forwards" }
+  );
+
+  const at = (fraction) => DURATION * fraction;
+  setTimeout(() => { GLOW.classList.add("on"); BEAM.classList.add("on"); band.classList.add("on"); }, at(0.4));
+  setTimeout(() => {
+    tile.classList.add(verdict);
+    GLOW.classList.remove("on");
+    BEAM.classList.remove("on");
+    band.classList.remove("on");
+    band.style.opacity = "0";
+    pulse(verdict, center + 40);
+  }, at(0.56));
+  motion.onfinish = () => tile.remove();
+  index++;
+}
+
+function pulse(verdict, x) {
+  const ring = document.createElement("div");
+  ring.className = "ripple " + verdict;
+  ring.style.left = x + "px";
+  STAGE.appendChild(ring);
+  ring.animate(
+    [
+      { transform: "scale(.4)", opacity: .9 },
+      { transform: "scale(2.2)", opacity: 0 },
+    ],
+    { duration: 700, easing: "cubic-bezier(.2,.7,.2,1)", fill: "forwards" }
+  ).onfinish = () => ring.remove();
+}
+
+function loop() {
+  spawn();
+  setTimeout(loop, DURATION / GAP);
+}
+
+if (reduce.matches) {
+  STATUS.innerHTML = "<b>veredicto</b> · limpio · pendiente · alerta";
+  const center = STAGE.clientWidth / 2;
+  [".py", ".exe", ".pdf"].forEach((ext, i) => {
+    const tile = document.createElement("div");
+    tile.className = "tile " + VERDICTS[i];
+    tile.style.transform = `translateX(${center - 46 + (i - 1) * 140}px)`;
+    tile.innerHTML = `<span class="fold"></span><span class="sheen"></span><span class="ext">${ext}</span><span class="dot"></span>`;
+    STAGE.appendChild(tile);
+  });
+} else {
+  loop();
+}
+</script>
+</body>
+</html>
