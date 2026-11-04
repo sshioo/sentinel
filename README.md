@@ -1,11 +1,11 @@
-# Sentinel
+﻿# Sentinel
 
 Aplicación de escritorio para Windows que responde a una pregunta: ¿es seguro
 abrir este archivo? Revisa cada archivo nuevo de Descargas, o el que elijas, con
 varios motores locales y da un veredicto claro (**Seguro**, **Revisar** o
 **Peligro**) con las pruebas que lo justifican.
 
-Versión actual: **1.2.0-beta.1**. Los cambios están en `CHANGELOG.md`.
+Versión actual: **1.2.0-beta.2**. Los cambios están en `CHANGELOG.md`.
 
 ## Instalar (sin Python)
 
