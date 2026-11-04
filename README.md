@@ -101,7 +101,9 @@ Las muestras son inocuas: no descargan nada ni tocan el sistema.
 Copia `.env.example` a `.env` (`install.bat` lo hace) y rellena solo lo que
 uses. Sin nada configurado, todo el análisis local funciona igual.
 
-**VirusTotal**: clave gratis en virustotal.com.
+**VirusTotal**: clave gratis en virustotal.com. Solo se consulta el hash. Si
+quieres que suba los archivos que no conoce, añade `VT_UPLOAD=1`; es opt-in
+porque lo que se sube pasa a ser accesible para los clientes de VirusTotal.
 
 ```
 VT_API_KEY=tu_clave
@@ -132,7 +134,8 @@ completo. Las respuestas se guardan en `reports/out/.ai_cache.json`.
 - Pulsa un archivo de **Actividad reciente** para ver el veredicto, qué hacer y
   la pestaña **Por qué**.
 - **Generar informe** crea un HTML autocontenido en `reports/out/`.
-- **Trazar código** ejecuta un script Python en un intérprete instrumentado.
+- **Trazar código** lista las llamadas peligrosas de un script Python con sus
+  argumentos. Es estático: el archivo no se ejecuta.
 - **Preguntar a la IA** usa el analista, si está configurado.
 
 ## Desarrollo
@@ -189,8 +192,10 @@ tests/                  siete suites
   técnicas de evasión y sondeo de teclado en su interfaz.
 - La detección se ha medido con muestras sintéticas y software legítimo, no con
   malware real.
-- El trazador no es un sandbox: aísla builtins, no el proceso. Para muestras
+- Sentinel no ejecuta los archivos que analiza. Para estudiar muestras
   desconocidas, usa una máquina virtual.
+- No se inspeccionan RAR, 7z, ISO, IMG ni VHD, ni los ZIP anidados. Tampoco las
+  macros XLM de Excel ni los accesos directos `.lnk`.
 - El analista IA puede equivocarse; el veredicto lo fijan las reglas.
 - La aplicación no está firmada. SmartScreen puede avisar si se empaqueta como
   ejecutable.

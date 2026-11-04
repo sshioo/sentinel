@@ -36,6 +36,7 @@ def _demo(app):
             "score": result.get("score", 0),
             "findings": result["findings"],
             "engine": result.get("engine", ""),
+            "errors": result.get("errors", []),
             "online": False,
         })
         time.sleep(1.6)
@@ -73,7 +74,7 @@ def main():
 
     from ui.app import SentinelApp
 
-    app = SentinelApp()
+    app = SentinelApp(demo=args.demo)
     if args.demo:
         threading.Thread(target=_demo, args=(app,), daemon=True).start()
     app.mainloop()

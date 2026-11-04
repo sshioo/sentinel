@@ -33,8 +33,12 @@ class ScanStage(_AACanvas):
         self._label = self.create_text(16, 14, anchor="w", text="", fill=T.TEXT_SECONDARY,
                                        font=(T.MONO_FONT, 9, "bold"))
         self._tag = self.create_text(0, 0, text="", fill=T.TEXT, font=(T.UI_FONT, 11, "bold"))
-        self.bind("<Configure>", lambda _e: self._kick(force=True))
+        self.bind("<Configure>", self._on_resize)
         self._kick()
+
+    def _on_resize(self, _event):
+        self._static_drawn = False
+        self._debounced_kick()
 
     def set_active(self, on):
         self.active = on
@@ -57,17 +61,20 @@ class ScanStage(_AACanvas):
             self._tick()
 
     def _tick(self):
+        if not self.winfo_ismapped():
+            self._last = time.perf_counter()
+            self._static_drawn = False
+            self._job = self.after(250, self._tick)
+            return
         dt = self._dt()
-        now = time.perf_counter()
+        now = started = time.perf_counter()
         self.level = approach(self.level, 1.0 if self.active else 0.0, dt, 3.5)
         self.pulses = [p for p in self.pulses if now - p["t0"] < PULSE_S]
         moving = bool(self.pulses) or self.active or self.level > 0.005
         if moving or not self._static_drawn:
             self._render(now)
             self._static_drawn = not moving
-        # Las ondas en reposo se mueven despacio: 30 fps bastan. Los pulsos van a 60.
-        frame = FRAME_MS if self.pulses else FRAME_MS * 2
-        self._job = self.after(frame, self._tick) if moving else None
+        self._job = self.after(self._delay(started), self._tick) if moving else None
 
     def _background(self, W, H):
         # Rejilla de puntos tenue, como el fondo de la web. Solo cambia al
@@ -153,9 +160,7 @@ class ScanStage(_AACanvas):
 
         img = img.resize((w, h), Image.BOX)
         img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(2)).resize((w, h), Image.BILINEAR))
-        self._photo = ImageTk.PhotoImage(img)
-        self.itemconfigure(self._img_item, image=self._photo)
-        self.tag_lower(self._img_item)
+        self._set_photo(img)
 
         if label:
             hx, p = label

@@ -20,8 +20,12 @@ except ImportError:
     _HAVE_OLETOOLS = False
 
 
-ZIP_OFFICE_EXT = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
-OLE_OFFICE_EXT = {".doc", ".xls", ".ppt", ".msi"}
+ZIP_OFFICE_EXT = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm", ".dotm", ".dotx",
+                  ".xlsb", ".xlam", ".xltm", ".xltx", ".potm", ".potx", ".ppsm", ".ppsx",
+                  ".ppam", ".sldm", ".sldx"}
+OLE_OFFICE_EXT = {".doc", ".xls", ".ppt", ".msi", ".dot", ".xlt", ".pot", ".pps", ".xla",
+                  ".ppa", ".pub"}
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def _finding(rule_id, detalle, line=0):
@@ -38,8 +42,22 @@ def _finding(rule_id, detalle, line=0):
     }
 
 
+def _head(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(8)
+    except OSError:
+        return b""
+
+
 def is_office(path):
-    return Path(path).suffix.lower() in (ZIP_OFFICE_EXT | OLE_OFFICE_EXT)
+    """Por extensión o por contenido: una macro con extensión .bin sigue siendo una macro."""
+    if Path(path).suffix.lower() in (ZIP_OFFICE_EXT | OLE_OFFICE_EXT):
+        return True
+    head = _head(path)
+    if head == _OLE_MAGIC:
+        return True
+    return head[:4] in (b"PK\x03\x04", b"PK\x05\x06") and _zip_has_vbaproject(path)
 
 
 def analyze_office(path):
@@ -52,7 +70,7 @@ def analyze_office(path):
     has_vba_project = False
     ext = path.suffix.lower()
 
-    if ext in ZIP_OFFICE_EXT:
+    if ext in ZIP_OFFICE_EXT or _head(path)[:2] == b"PK":
         has_vba_project = _zip_has_vbaproject(path)
         if has_vba_project:
             findings.append(_finding("vba_macro", "vbaProject.bin presente en el paquete OOXML"))

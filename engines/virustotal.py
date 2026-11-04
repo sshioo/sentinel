@@ -8,6 +8,7 @@ from config import (
     SEVERITY_SCORE,
     VT_API_URL,
     VT_MAX_UPLOAD_BYTES,
+    VT_MIN_ENGINES,
     VT_RATE_LIMIT_PER_MIN,
     VT_TIMEOUT_S,
 )
@@ -39,6 +40,12 @@ def has_api_key():
     return bool(_api_key())
 
 
+def upload_allowed():
+    """Subir un archivo a VirusTotal lo hace accesible a sus clientes. Por defecto
+    solo se consulta el hash; subir exige VT_UPLOAD=1 en .env."""
+    return os.environ.get("VT_UPLOAD", "").strip() == "1"
+
+
 def _sha256(path):
     from core.binary_analyzer import hashes
     return hashes(path)["sha256"]
@@ -64,7 +71,7 @@ def scan(sha256=None, path=None):
         sha256 = _sha256(path)
     try:
         report = _get_report(sha256, headers) if sha256 else None
-        if report is None and path is not None:
+        if report is None and path is not None and upload_allowed():
             report = _lookup_by_path(path, headers)
     except _RateLimited:
         return _skip("rate limit de VirusTotal (429)")
@@ -72,7 +79,9 @@ def scan(sha256=None, path=None):
         return _skip(f"error consultando VirusTotal: {exc}")
 
     if report is None:
-        return _skip("sin resultados en VirusTotal")
+        if upload_allowed():
+            return _skip("sin resultados en VirusTotal")
+        return _skip("VirusTotal no conoce este archivo; no se sube (VT_UPLOAD=1 en .env lo permite)")
 
     return _build_findings(report)
 
@@ -140,8 +149,12 @@ def _build_findings(report):
     findings = []
     if malicious or suspicious:
         rule = BINARY_RULES["vt_detection"]
-        sev = "crítico" if malicious else "alto"
-        findings.append({
+        # Uno o dos motores entre setenta son, con frecuencia, falsos positivos
+        # (instaladores legítimos, heurísticas de aprendizaje automático).
+        strong = malicious >= VT_MIN_ENGINES or malicious + suspicious >= VT_MIN_ENGINES + 2
+        sev = ("crítico" if malicious else "alto") if strong else "medio"
+        detalle = f"{malicious} maliciosos, {suspicious} sospechosos de {total} motores"
+        finding = {
             "line": 0,
             "rule_id": "vt_detection",
             "regla": rule["titulo"],
@@ -149,8 +162,11 @@ def _build_findings(report):
             "peso": SEVERITY_SCORE[sev],
             "mitre_id": rule["mitre"][0],
             "mitre_name": rule["mitre"][1],
-            "detalle": f"{malicious} maliciosos, {suspicious} sospechosos de {total} motores",
-        })
+            "detalle": detalle if strong else detalle + " · detección aislada, puede ser un falso positivo",
+        }
+        if not strong:
+            finding["confianza"] = "media"
+        findings.append(finding)
 
     engines = _top_engines(attrs)
     score = weighted_score(findings)

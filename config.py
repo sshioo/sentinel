@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-VERSION = "1.2.0-beta.1"
+VERSION = "1.2.0-beta.2"
 
 # Empaquetado con PyInstaller, el código y las reglas viven en una carpeta de
 # solo lectura (Program Files). Informes, caché y .env van a la carpeta del
@@ -32,6 +32,8 @@ RULES = [
     ("-enc ", "PowerShell con comando codificado", "alto"),
     ("Invoke-Expression", "PowerShell Invoke-Expression (IEX)", "alto"),
     ("IEX(", "PowerShell IEX abreviado", "alto"),
+    ("IEX (", "PowerShell IEX abreviado", "alto"),
+    ("iex ", "PowerShell IEX abreviado", "alto"),
     ("DownloadString", "descarga de contenido remoto", "alto"),
     ("DownloadFile", "descarga de archivo remoto", "alto"),
     ("New-Object Net.WebClient", "WebClient para descarga", "alto"),
@@ -49,6 +51,14 @@ RULES = [
     ("chmod +x", "marcado de ejecutable", "bajo"),
     ("crontab", "persistencia vía cron", "medio"),
     ("/etc/passwd", "acceso a credenciales de sistema", "medio"),
+    ("WScript.Shell", "WScript.Shell: lanza programas desde un script", "alto"),
+    ("ActiveXObject", "objeto ActiveX (Windows Script Host)", "medio"),
+    ("-WindowStyle Hidden", "PowerShell con la ventana oculta", "medio"),
+    ("-ExecutionPolicy Bypass", "PowerShell omite la política de ejecución", "medio"),
+    ("Set-MpPreference", "cambia la configuración del antivirus", "alto"),
+    ("Add-MpPreference", "añade exclusiones al antivirus", "alto"),
+    ("Reflection.Assembly]::Load", "carga un ensamblado .NET directamente en memoria", "alto"),
+    ("VirtualAlloc", "reserva memoria ejecutable (carga de shellcode)", "alto"),
 ]
 
 SEVERITY_SCORE = {"bajo": 6, "medio": 14, "alto": 30, "crítico": 45}
@@ -335,6 +345,16 @@ BINARY_RULES = {
         "severidad": "alto",
         "mitre": ("T1204.002", "User Execution: Malicious File"),
     },
+    "archive_encrypted": {
+        "titulo": "Archivo comprimido cifrado: su contenido no se puede revisar",
+        "severidad": "medio",
+        "mitre": ("T1027.013", "Obfuscated Files or Information: Encrypted/Encoded File"),
+    },
+    "archive_traversal": {
+        "titulo": "Miembro con ruta fuera de la carpeta de extracción",
+        "severidad": "alto",
+        "mitre": ("T1036", "Masquerading"),
+    },
     "pdf_auto_js": {
         "titulo": "JavaScript con ejecución automática en PDF",
         "severidad": "crítico",
@@ -550,6 +570,11 @@ BINARY_RULES = {
         "severidad": "crítico",
         "mitre": ("T1204.002", "User Execution: Malicious File"),
     },
+    "script_download_exec": {
+        "titulo": "Script que descarga contenido remoto y lo ejecuta",
+        "severidad": "alto",
+        "mitre": ("T1105", "Ingress Tool Transfer"),
+    },
 }
 
 # Un import aislado no dice nada: VirtualAlloc o GetProcAddress están en casi
@@ -647,6 +672,7 @@ RULE_CONFIDENCE = {
     "pdf_auto_js": "alta",
     "pdf_launch": "alta",
     "vba_dropper": "alta",
+    "script_download_exec": "alta",
     "vt_detection": "alta",
     "pe_injection": "alta",
     "pe_hollowing": "alta",
@@ -728,16 +754,29 @@ COMPOUND_RULES = [
      "Cadena codificada larga y ejecución dinámica en el mismo script"),
 ]
 
+# Patrón clásico de PowerShell: bajar texto de internet y pasárselo a IEX.
+COMPOUND_RULES += [
+    (frozenset({f"text:{run}", f"text:{get}"}), "script_download_exec",
+     "El script descarga contenido remoto y lo ejecuta (IEX sobre una descarga)")
+    for run in ("PowerShell Invoke-Expression (IEX)", "PowerShell IEX abreviado")
+    for get in ("descarga de contenido remoto", "descarga de archivo remoto", "WebClient para descarga")
+]
+
 ENTROPY_BLOCK_SIZE = 4096
 ENTROPY_HIGH = 7.2
 ENTROPY_SECTION_HIGH = 7.0
 ENTROPY_SCAN_LIMIT = 64 * 1024 * 1024
 
 YARA_RULES_DIR = PROJECT_DIR / "rules"
+YARA_TIMEOUT_S = 60
+
+# Tope de lectura de motores que cargan el archivo en memoria (PDF).
+MAX_READ_BYTES = 64 * 1024 * 1024
 
 VT_API_URL = "https://www.virustotal.com/api/v3"
 VT_RATE_LIMIT_PER_MIN = 4
 VT_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
+VT_MIN_ENGINES = 3
 VT_TIMEOUT_S = 30
 
 REPORTS_DIR = USER_DIR / "reports" / "out"

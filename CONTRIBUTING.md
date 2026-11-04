@@ -46,7 +46,7 @@ de Python. Si salta con alguno, no es «alta».
 
 Usa solo `tools/make_samples.py` o archivos legítimos. No añadas malware real al
 repositorio. Si necesitas probar con muestras reales, hazlo en una máquina
-virtual aislada y sin el trazador.
+virtual aislada.
 
 ## Secretos
 

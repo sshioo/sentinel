@@ -1,7 +1,8 @@
 import re
+import zlib
 from pathlib import Path
 
-from config import BINARY_RULES, MAX_SNIPPET_LEN, PDF_DANGER_KEYS, SEVERITY_SCORE
+from config import BINARY_RULES, MAX_READ_BYTES, MAX_SNIPPET_LEN, PDF_DANGER_KEYS, SEVERITY_SCORE
 from core.scoring import estado_from_score, weighted_score
 
 try:
@@ -36,18 +37,20 @@ def is_pdf(path):
 def analyze_pdf(path):
     path = Path(path)
     try:
-        raw = path.read_bytes()
+        with open(path, "rb") as fh:
+            raw = fh.read(MAX_READ_BYTES)
     except OSError as exc:
-        return {"score": 0, "estado": "alerta", "findings": [], "error": str(exc),
+        return {"score": 0, "estado": "pendiente", "findings": [], "error": str(exc),
                 "engine": "pdf"}
 
     findings = []
     seen = set()
+    haystack = _haystack(raw)
 
     for token, (rule_id, label) in PDF_DANGER_KEYS.items():
         if rule_id in seen:
             continue
-        if re.search(rb"/" + re.escape(token.encode()) + rb"\b", raw, re.IGNORECASE):
+        if re.search(rb"/" + re.escape(token.encode()) + rb"\b", haystack, re.IGNORECASE):
             findings.append(_finding(rule_id, f"clave {label}"))
             seen.add(rule_id)
 
@@ -66,6 +69,30 @@ def analyze_pdf(path):
         "engine": "pdf",
         "meta": {"streams": streams, "filters": filters, **meta},
     }
+
+
+_HEX_NAME = re.compile(rb"#([0-9A-Fa-f]{2})")
+_STREAM = re.compile(rb"stream\r?\n(.*?)endstream", re.DOTALL)
+_MAX_INFLATED = 8 * 1024 * 1024
+_MAX_STREAMS = 400
+
+
+def _haystack(raw):
+    """Texto donde buscar claves: el PDF con los nombres #xx decodificados más el
+    contenido de los flujos comprimidos (/ObjStm guarda diccionarios ahí dentro)."""
+    parts = [_HEX_NAME.sub(lambda m: bytes([int(m.group(1), 16)]), raw)]
+    budget = _MAX_INFLATED
+    for i, m in enumerate(_STREAM.finditer(raw)):
+        if i >= _MAX_STREAMS or budget <= 0:
+            break
+        try:
+            inflater = zlib.decompressobj()
+            data = inflater.decompress(m.group(1), min(budget, 1024 * 1024))
+        except zlib.error:
+            continue
+        budget -= len(data)
+        parts.append(_HEX_NAME.sub(lambda mm: bytes([int(mm.group(1), 16)]), data))
+    return b"\n".join(parts)
 
 
 def _stream_stats(raw):

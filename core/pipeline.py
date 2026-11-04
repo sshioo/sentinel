@@ -13,8 +13,18 @@ from core import (
 )
 from core.scoring import attenuate_trusted, estado_from_score, finalize, weighted_score
 
-ZIP_OFFICE_EXT = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
-OLE_OFFICE_EXT = {".doc", ".xls", ".ppt", ".msi"}
+# Motores cuyo fallo deja el veredicto a medias. VirusTotal y capa son
+# opcionales: sin clave o sin reglas no se considera un análisis incompleto.
+CORE_ENGINES = {"binary", "yara", "pe", "pdf", "office", "archivo", "nombre"}
+
+
+def _safe(engine, fn, *args, **kwargs):
+    """Un motor que falla no puede tumbar a los demás ni dejar el archivo como «seguro»."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - RecursionError, MemoryError, errores de librerías
+        return {"engine": engine, "score": 0, "estado": "pendiente", "findings": [],
+                "error": f"fallo interno ({type(exc).__name__}): {str(exc)[:120]}"}
 
 
 def analyze_binary(path, online=True, deep=True):
@@ -25,33 +35,32 @@ def analyze_binary(path, online=True, deep=True):
     path = Path(path)
     results = []
 
-    base = binary_analyzer.analyze_binary(path)
+    base = _safe("binary", binary_analyzer.analyze_binary, path)
     results.append(base)
-    results.append(yara_scanner.scan(path))
-    results.append({"engine": "nombre", "score": 0, "estado": "limpio",
-                    "findings": name_checks.check(path), "error": None})
+    results.append(_safe("yara", yara_scanner.scan, path))
+    results.append(_safe("nombre", lambda: {"engine": "nombre", "score": 0, "estado": "limpio",
+                                            "findings": name_checks.check(path), "error": None}))
 
-    if archive_analyzer.is_zip(path):
-        results.append(archive_analyzer.analyze_archive(path))
+    if _safe("archivo", archive_analyzer.is_zip, path) is True:
+        results.append(_safe("archivo", archive_analyzer.analyze_archive, path))
 
-    ext = path.suffix.lower()
     sig = None
     if pe_analyzer.is_pe(path):
-        pe = pe_analyzer.analyze_pe(path)
+        pe = _safe("pe", pe_analyzer.analyze_pe, path)
         results.append(pe)
         sig = (pe.get("meta") or {}).get("firma")
         if deep and not pe.get("error"):
-            results.append(reverse_engineer.analyze(
-                path, (base.get("meta") or {}).get("sha256", ""), _capa_skip(sig)))
+            results.append(_safe("capa", reverse_engineer.analyze,
+                                 path, (base.get("meta") or {}).get("sha256", ""), _capa_skip(sig)))
 
-    if ext in (ZIP_OFFICE_EXT | OLE_OFFICE_EXT):
-        results.append(office_analyzer.analyze_office(path))
+    if office_analyzer.is_office(path):
+        results.append(_safe("office", office_analyzer.analyze_office, path))
 
     if pdf_analyzer.is_pdf(path):
-        results.append(pdf_analyzer.analyze_pdf(path))
+        results.append(_safe("pdf", pdf_analyzer.analyze_pdf, path))
 
     if online:
-        results.append(_virustotal(path))
+        results.append(_safe("virustotal", _virustotal, path))
 
     return _merge(results, sig)
 
@@ -83,6 +92,7 @@ def _merge(results, sig=None):
     findings = []
     engines = []
     errors = []
+    incomplete = False
     meta = {}
     for r in results:
         engine = r.get("engine", "?")
@@ -90,6 +100,7 @@ def _merge(results, sig=None):
         findings.extend(r.get("findings", []))
         if r.get("error"):
             errors.append(f"{engine}: {r['error']}")
+            incomplete = incomplete or engine in CORE_ENGINES
         if r.get("meta"):
             meta[engine] = r["meta"]
 
@@ -98,11 +109,15 @@ def _merge(results, sig=None):
         attenuate_trusted(findings, sig.get("signer") or "firmante desconocido", sig.get("os", False))
     score = weighted_score(findings)
     estado = estado_from_score(score, findings)
+    # Fallar abierto sería declarar «seguro» un archivo que no se pudo revisar.
+    if incomplete and estado == "limpio":
+        estado = "pendiente"
     return {
         "score": score,
         "estado": estado,
         "findings": findings,
         "engine": "multi:" + "+".join(engines),
         "errors": errors,
+        "incomplete": incomplete,
         "meta": meta,
     }

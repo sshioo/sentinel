@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from config import BINARY_RULES, MAX_SNIPPET_LEN, SEVERITY_SCORE, YARA_RULES_DIR
+from config import BINARY_RULES, MAX_SNIPPET_LEN, SEVERITY_SCORE, YARA_RULES_DIR, YARA_TIMEOUT_S
 from core.scoring import estado_from_score, weighted_score
 
 _RULES = None
@@ -48,8 +48,9 @@ def scan(path):
                 "error": _LOAD_ERROR or "reglas YARA no compiladas", "engine": "yara"}
 
     try:
-        data = Path(path).resolve().read_bytes()
-        matches = _RULES.match(data=data)
+        # Por ruta, no con read_bytes(): YARA mapea el archivo en lugar de
+        # cargarlo entero en memoria, y el límite de tiempo corta reglas lentas.
+        matches = _RULES.match(filepath=str(Path(path).resolve()), timeout=YARA_TIMEOUT_S)
     except yara.Error as exc:
         return {"score": 0, "estado": "pendiente", "findings": [], "error": str(exc),
                 "engine": "yara"}

@@ -63,7 +63,7 @@ Esa es la forma de una carga ofuscada.»
 
 ## Qué no prometer
 
-- No es un sandbox: el trazador aísla builtins, no el proceso.
+- No es un sandbox: Sentinel analiza sin ejecutar los archivos.
 - No sustituye a un antivirus.
 - La IA no detecta: explica los hallazgos y puede equivocarse.
 - La detección no se ha medido todavía con malware real.

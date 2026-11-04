@@ -54,8 +54,19 @@ class _AACanvas(tk.Canvas):
         super().__init__(master, width=width, height=height, bg=bg, highlightthickness=0, bd=0)
         self.bg = bg
         self._photo = None
+        self._cfg_job = None
         self._img_item = self.create_image(0, 0, anchor="nw")
         self._last = time.perf_counter()
+
+    def _debounced_kick(self, *_):
+        """Al redimensionar llegan decenas de eventos por segundo: se junta todo en un
+        solo redibujado en vez de dibujar la imagen completa en cada uno."""
+        if self._cfg_job is None:
+            self._cfg_job = self.after(14, self._fire_kick)
+
+    def _fire_kick(self):
+        self._cfg_job = None
+        self._kick()
 
     def _dt(self):
         now = time.perf_counter()
@@ -63,8 +74,26 @@ class _AACanvas(tk.Canvas):
         self._last = now
         return dt
 
+    @staticmethod
+    def _delay(started):
+        """Espera hasta el próximo fotograma descontando lo que costó dibujar este."""
+        return max(1, int(FRAME_MS - (time.perf_counter() - started) * 1000))
+
     def _present(self, img, w, h):
-        img = img.resize((w, h), Image.BOX)
+        if img.size != (w, h):
+            f = img.width // w
+            if f * w == img.width and f * h == img.height:
+                img = img.reduce(f)  # promedio por bloques, más rápido que resize
+            else:
+                img = img.resize((w, h), Image.BOX)
+        self._set_photo(img)
+
+    def _set_photo(self, img):
+        """Reutiliza la imagen de Tk si el tamaño no cambia: evita crear una por fotograma."""
+        photo = self._photo
+        if photo is not None and photo.width() == img.width and photo.height() == img.height:
+            photo.paste(img)
+            return
         self._photo = ImageTk.PhotoImage(img)
         self.itemconfigure(self._img_item, image=self._photo)
         self.tag_lower(self._img_item)
@@ -87,8 +116,9 @@ class ScoreGauge(_AACanvas):
         self._job = None
         self._num = self.create_text(size / 2, size / 2 - 6, text="—", fill=T.TEXT_DISABLED,
                                      font=(T.MONO_FONT, int(size / 4.3), "bold"))
-        self._cap = self.create_text(size / 2, size / 2 + size / 5.2, text="sin datos",
-                                     fill=T.TEXT_SECONDARY, font=(T.UI_FONT, 10))
+        # Bajo los extremos del arco, que dejan el hueco abajo.
+        self._cap = self.create_text(size / 2, size * 0.88, text="sin datos",
+                                     fill=T.TEXT_SECONDARY, font=(T.UI_FONT, 9))
         self._render()
 
     def set(self, score, estado, caption=None):
@@ -113,7 +143,10 @@ class ScoreGauge(_AACanvas):
     def _tick(self):
         k = min(1.0, (time.perf_counter() - self.t0) / self.DURATION)
         self.shown = self.start + (self.target - self.start) * ease_out(k)
-        self.itemconfigure(self._num, text=f"{self.shown:.0f}")
+        text = f"{self.shown:.0f}"
+        # Tres cifras ("100") no caben con el tamaño de dos dentro del anillo.
+        self.itemconfigure(self._num, text=text,
+                           font=(T.MONO_FONT, int(self.size / (4.3 if len(text) < 3 else 5.6)), "bold"))
         self._render()
         self._job = self.after(FRAME_MS, self._tick) if k < 1 else None
 
@@ -178,13 +211,18 @@ class ShieldPulse(_AACanvas):
         return right + left
 
     def _tick(self):
+        started = time.perf_counter()
         dt = self._dt()
         self.level = approach(self.level, 1.0 if self.active else 0.0, dt, 6)
         settled = not self.active and self.level < 0.01
+        if not self.winfo_ismapped():
+            self._idle_drawn = False
+            self.after(250, self._tick)
+            return
         if not (settled and self._idle_drawn):
             self._render(time.perf_counter())
             self._idle_drawn = settled
-        self.after(FRAME_MS * 2, self._tick)
+        self.after(self._delay(started) if not settled else 120, self._tick)
 
     def _render(self, now):
         s, ss = self.size, self.SS
@@ -245,7 +283,7 @@ class DropZone(_AACanvas):
         self._job = None
         self._title = self.create_text(0, 0, text="", fill=T.TEXT, font=(T.UI_FONT, 14, "bold"))
         self._sub = self.create_text(0, 0, text="", fill=T.TEXT_SECONDARY, font=(T.UI_FONT, 11))
-        self.bind("<Configure>", lambda _e: self._kick())
+        self.bind("<Configure>", self._debounced_kick)
         self.bind("<Enter>", lambda _e: self._set_hover(True))
         self.bind("<Leave>", lambda _e: self._set_hover(False))
         self.bind("<Button-1>", lambda _e: None if self.busy else self.command())

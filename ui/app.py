@@ -3,6 +3,7 @@ import queue
 import sys
 import threading
 import time
+import tkinter as tk
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -10,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import customtkinter as ctk
 from tkinter import filedialog
 
-from config import GUI_POLL_MS, PROJECT_DIR, REPORTS_DIR, WATCH_DIR
+from config import CODE_EXTENSIONS, GUI_POLL_MS, PROJECT_DIR, REPORTS_DIR, WATCH_DIR
 
 try:
     from PIL import Image
@@ -26,7 +27,10 @@ from core.scoring import confidence
 from core.watcher import Watcher
 from engines import ai_analyst
 from reports import report
+from ui import history
 from ui import theme as T
+from ui.icons import icon
+from ui.dashboard import Donut, KpiCard, RiskTimeline, card
 from ui.scanstage import ScanStage
 from ui.widgets import DropZone, ScoreGauge, ShieldPulse, ext_badge
 
@@ -35,7 +39,7 @@ ctk.set_default_color_theme("dark-blue")
 
 _MOTION_MS = 16
 _PULSE_STEPS = 10
-_MAX_ROWS = 200
+_MAX_ROWS = 60
 _CONF_ORDER = {"alta": 0, "media": 1, "baja": 2}
 _SEV_ORDER = {"crítico": 0, "alto": 1, "medio": 2, "bajo": 3}
 
@@ -119,10 +123,14 @@ class Splash(ctk.CTkToplevel):
 
 
 class SentinelApp(ctk.CTk):
-    VIEW_TITLES = {"monitor": "Inicio", "reports": "Informes", "config": "Motores"}
+    PADDING = {"home": (28, 20), "activity": (18, 16), "reports": (18, 16), "config": (18, 16)}
 
-    def __init__(self):
+    def __init__(self, demo=False):
         super().__init__()
+        self.demo = demo
+        self._home_job = None
+        self._save_job = None
+        self._loading = False
         self.title("Sentinel — ¿es seguro este archivo?")
         self.geometry("1320x820")
         self.minsize(1180, 720)
@@ -137,12 +145,13 @@ class SentinelApp(ctk.CTk):
         self.watching = False
         self.rows = {}
         self.selected = None
-        self.view = "monitor"
+        self.view = "home"
         self.monitor_ready = False
         self.busy = False
         self.stats = {"total": 0, "alerta": 0, "pendiente": 0, "limpio": 0, "score_sum": 0}
 
         self.withdraw()
+        self._paint_window_background()
         self.splash = Splash(self)
         self.after(1850, self._reveal)
         self._build()
@@ -180,9 +189,12 @@ class SentinelApp(ctk.CTk):
                      text_color=T.TEXT_SECONDARY).pack(anchor="w")
 
         self.nav_buttons = {}
-        for key, icon, label in (("monitor", "◉", "Inicio"), ("reports", "▤", "Informes"),
-                                 ("config", "⚙", "Motores")):
-            self.nav_buttons[key] = self._nav_item(icon, label, lambda k=key: self.show_view(k))
+        for key, icon, label in (("home", "⌂", "Inicio"), ("activity", "☰", "Actividad")):
+            self.nav_buttons[key] = self._nav_item(key, label, lambda k=key: self.show_view(k))
+        ctk.CTkLabel(self.sidebar, text="ADMINISTRAR", font=(T.MONO_FONT, 9, "bold"),
+                     text_color=T.TEXT_DISABLED, anchor="w").pack(fill="x", padx=22, pady=(18, 4))
+        for key, icon, label in (("reports", "▤", "Informes"), ("config", "⚙", "Motores")):
+            self.nav_buttons[key] = self._nav_item(key, label, lambda k=key: self.show_view(k))
 
         status = ctk.CTkFrame(self.sidebar, fg_color=T.ELEVATED, corner_radius=T.RADIUS_MD)
         status.pack(side="bottom", fill="x", padx=12, pady=14)
@@ -195,97 +207,423 @@ class SentinelApp(ctk.CTk):
         main = ctk.CTkFrame(self, fg_color=T.BG, corner_radius=0)
         main.pack(side="left", fill="both", expand=True)
 
+        # Las vistas viven en un lienzo de tamaño fijo que se reajusta una sola vez
+        # cuando el usuario suelta el borde. Mientras arrastra, recalcular unos 120
+        # widgets en cada paso tardaba ~300 ms y la ventana se veía a trompicones.
+        # Es un tk.Frame para colocarlo en píxeles reales, sin el escalado de CTk.
+        self._main = main
+        self._stage_size = (0, 0)
+        self._stage_job = None
+        self.stage_frame = tk.Frame(main, bg=T.BG, bd=0, highlightthickness=0)
+        self.stage_frame.place(x=0, y=0, width=1, height=1)
+        main.bind("<Configure>", self._on_main_resize)
+
         self.views = {}
-        for key, builder in (("monitor", self._build_monitor),
+        for key, builder in (("home", self._build_home),
+                             ("activity", self._build_activity),
                              ("reports", self._build_reports),
                              ("config", self._build_config)):
-            self.views[key] = builder(main)
+            self.views[key] = builder(self.stage_frame)
 
-        self.show_view("monitor")
+        self.show_view("home")
+        self._refresh_home()
         self.after(GUI_POLL_MS, self._poll)
+        if not self.demo:
+            self.after(450, self._load_history)
 
-    def _nav_item(self, icon, label, command):
+    def _paint_window_background(self):
+        """Al agrandar la ventana, Windows rellena la zona nueva con el pincel de fondo
+        de la clase de ventana (blanco) hasta que Tk la repinta: ese parpadeo blanco
+        es lo que se veía al redimensionar. Se sustituye por el color de la interfaz."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+            gdi32.CreateSolidBrush.argtypes = [wintypes.COLORREF]
+            gdi32.CreateSolidBrush.restype = wintypes.HBRUSH
+            user32.SetClassLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+            user32.SetClassLongPtrW.restype = ctypes.c_void_p
+            user32.GetParent.argtypes = [wintypes.HWND]
+            user32.GetParent.restype = wintypes.HWND
+            r, g, b = (int(T.BG[i:i + 2], 16) for i in (1, 3, 5))
+            self._bg_brush = gdi32.CreateSolidBrush(r | (g << 8) | (b << 16))
+            inner = self.winfo_id()
+            for hwnd in (inner, user32.GetParent(inner)):
+                if hwnd:
+                    user32.SetClassLongPtrW(hwnd, -10, self._bg_brush)  # GCLP_HBRUSHBACKGROUND
+        except Exception:  # noqa: BLE001 - cosmético: si falla, solo vuelve el parpadeo
+            pass
+
+    def _on_main_resize(self, event):
+        self._main_size = (event.width, event.height)
+        if self._stage_size == (0, 0):
+            self._apply_stage()
+            return
+        if self._stage_job is not None:
+            self.after_cancel(self._stage_job)
+        self._stage_job = self.after(140, self._apply_stage)
+
+    def _apply_stage(self):
+        self._stage_job = None
+        size = self._main_size
+        if size != self._stage_size and size[0] > 1 and size[1] > 1:
+            self.stage_frame.place_configure(width=size[0], height=size[1])
+            self._stage_size = size
+
+    def _nav_item(self, key, label, command):
         wrap = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=42)
         wrap.pack(fill="x", padx=10, pady=2)
         wrap.pack_propagate(False)
         bar = ctk.CTkFrame(wrap, fg_color="transparent", width=3, corner_radius=2)
         bar.pack(side="left", fill="y", padx=(0, 8), pady=6)
-        btn = ctk.CTkButton(wrap, text=f"{icon}   {label}", anchor="w", height=36, border_spacing=8,
+        btn = ctk.CTkButton(wrap, text=f"  {label}", image=icon(key, 17, T.TEXT_SECONDARY),
+                            compound="left", anchor="w", height=36, border_spacing=8,
                             fg_color="transparent", hover_color=T.ELEVATED,
                             text_color=T.TEXT_SECONDARY, font=(T.UI_FONT, 14),
                             corner_radius=T.RADIUS_SM, command=command)
         btn.pack(fill="x", side="left", expand=True)
         wrap.bar = bar
         wrap.btn = btn
+        wrap.badge = ctk.CTkLabel(wrap, text="", width=22, height=20, corner_radius=10,
+                                  font=(T.UI_FONT, 11, "bold"), text_color=T.ON_PRIMARY,
+                                  fg_color=T.PRIMARY)
+        wrap.badge.bind("<Button-1>", lambda _e: command())
         return wrap
+
+    def _set_badge(self, key, count, color=T.PRIMARY):
+        badge = self.nav_buttons[key].badge
+        if count:
+            badge.configure(text=str(count), fg_color=color)
+            badge.place(relx=1.0, rely=0.5, x=-12, anchor="e")
+        else:
+            badge.place_forget()
 
     def show_view(self, key):
         self.view = key
         for k, frame in self.views.items():
             if k == key:
-                frame.pack(fill="both", expand=True, padx=18, pady=16)
+                px, py = self.PADDING[k]
+                frame.pack(fill="both", expand=True, padx=px, pady=py)
             else:
                 frame.pack_forget()
         for k, wrap in self.nav_buttons.items():
             active = (k == key)
             wrap.bar.configure(fg_color=T.PRIMARY if active else "transparent")
-            wrap.btn.configure(text_color=T.TEXT if active else T.TEXT_SECONDARY,
+            wrap.btn.configure(image=icon(k, 17, T.PRIMARY if active else T.TEXT_SECONDARY),
+                               text_color=T.TEXT if active else T.TEXT_SECONDARY,
                                fg_color=T.ELEVATED if active else "transparent",
                                font=(T.UI_FONT, 14, "bold" if active else "normal"))
         if key == "reports":
             self._refresh_reports()
 
-    # ── vista de inicio ──
-    def _build_monitor(self, parent):
+    # ── vista de inicio (panel) ──
+    def _card_header(self, parent, title, action_text=None, action=None, subtitle=None):
+        head = ctk.CTkFrame(parent, fg_color="transparent")
+        head.pack(fill="x", padx=20, pady=(14, 6))
+        col = ctk.CTkFrame(head, fg_color="transparent")
+        col.pack(side="left")
+        ctk.CTkLabel(col, text=title, font=(T.UI_FONT, 15, "bold"), text_color=T.TEXT).pack(anchor="w")
+        if subtitle:
+            ctk.CTkLabel(col, text=subtitle, font=(T.UI_FONT, 11),
+                         text_color=T.TEXT_SECONDARY).pack(anchor="w")
+        if action_text:
+            ctk.CTkButton(head, text=f"{action_text}  →", width=1, height=26, fg_color="transparent",
+                          hover_color=T.ELEVATED, text_color=T.TEXT_SECONDARY,
+                          font=(T.UI_FONT, 12), command=action).pack(side="right")
+        return head
+
+    def _build_home(self, parent):
         frame = ctk.CTkFrame(parent, fg_color=T.BG, corner_radius=0)
 
-        hero = ctk.CTkFrame(frame, fg_color="transparent")
-        hero.pack(fill="x")
-        hero.grid_columnconfigure(0, weight=5, uniform="hero")
-        hero.grid_columnconfigure(1, weight=7, uniform="hero")
+        head = ctk.CTkFrame(frame, fg_color="transparent")
+        head.pack(fill="x")
+        left = ctk.CTkFrame(head, fg_color="transparent")
+        left.pack(side="left")
+        ctk.CTkLabel(left, text="TU EQUIPO, DE UN VISTAZO", font=(T.MONO_FONT, 10, "bold"),
+                     text_color=T.TEXT_SECONDARY).pack(anchor="w")
+        self.home_title = ctk.CTkLabel(left, text="", font=(T.UI_FONT, 28, "bold"), text_color=T.TEXT)
+        self.home_title.pack(anchor="w", pady=(4, 0))
+        self.home_sub = ctk.CTkLabel(left, text="", font=T.F_BODY, text_color=T.TEXT_SECONDARY)
+        self.home_sub.pack(anchor="w", pady=(2, 0))
+        ctk.CTkButton(head, text="Ver toda la actividad  →", height=38, width=190,
+                      command=lambda: self.show_view("activity"),
+                      **T.button_style("secondary")).pack(side="right", anchor="s")
 
-        prot = ctk.CTkFrame(hero, fg_color=T.SURFACE, corner_radius=14)
-        prot.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        self.shield = ShieldPulse(prot, size=104, bg=T.SURFACE)
-        self.shield.pack(side="left", padx=(14, 4), pady=10)
+        kpis = ctk.CTkFrame(frame, fg_color="transparent")
+        kpis.pack(fill="x", pady=(18, 0))
+        self.kpis = {}
+        for i, (key, title, color, spark) in enumerate((
+                ("total", "Archivos analizados", T.TEXT, T.PRIMARY),
+                ("alerta", "En peligro", T.DANGER, T.DANGER),
+                ("pendiente", "Para revisar", T.WARNING, T.WARNING))):
+            kpis.grid_columnconfigure(i, weight=1, uniform="kpi")
+            k = KpiCard(kpis, title, color, spark)
+            k.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 5, 5))
+            self.kpis[key] = k
+        kpis.grid_columnconfigure(3, weight=1, uniform="kpi")
+        ring_card = card(kpis)
+        ring_card.grid(row=0, column=3, sticky="nsew", padx=(5, 0))
+        self.ring = ScoreGauge(ring_card, size=104, bg=T.SURFACE)
+        self.ring.pack(side="left", padx=(12, 4), pady=10)
+        rt = ctk.CTkFrame(ring_card, fg_color="transparent")
+        rt.pack(side="left", fill="both", expand=True, padx=(4, 14), pady=3)
+        ctk.CTkLabel(rt, text="PUNTUACIÓN DE SEGURIDAD", font=(T.MONO_FONT, 9, "bold"),
+                     text_color=T.TEXT_SECONDARY, anchor="w").pack(anchor="w", pady=(24, 0))
+        self.ring_text = ctk.CTkLabel(rt, text="", font=(T.UI_FONT, 12, "bold"), text_color=T.TEXT,
+                                      anchor="w", justify="left", wraplength=118)
+        self.ring_text.pack(anchor="w", pady=(4, 0))
+
+        mid = ctk.CTkFrame(frame, fg_color="transparent")
+        mid.pack(fill="both", expand=True, pady=(12, 0))
+        mid.grid_columnconfigure(0, weight=3, uniform="mid")
+        mid.grid_columnconfigure(1, weight=2, uniform="mid")
+        mid.grid_rowconfigure(0, weight=5)
+        mid.grid_rowconfigure(1, weight=4)
+
+        chart = card(mid)
+        chart.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=(0, 6))
+        ch = self._card_header(chart, "Riesgo de los últimos análisis",
+                               subtitle="Cada punto es un archivo. Pasa el ratón para ver cuál.")
+        self.live_lbl = ctk.CTkLabel(ch, text="●  en pausa", font=(T.UI_FONT, 12, "bold"),
+                                     text_color=T.TEXT_SECONDARY)
+        self.live_lbl.pack(side="right")
+        body = ctk.CTkFrame(chart, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+        dcol = ctk.CTkFrame(body, fg_color="transparent")
+        dcol.pack(side="right", padx=(4, 14))
+        self.timeline = RiskTimeline(body)
+        self.timeline.pack(side="left", fill="both", expand=True)
+        self.donut = Donut(dcol, size=108)
+        self.donut.pack(pady=(4, 8))
+        self.legend = {}
+        for key, label, color in (("limpio", "Seguros", T.SUCCESS), ("pendiente", "Revisar", T.WARNING),
+                                  ("alerta", "Peligro", T.DANGER)):
+            row = ctk.CTkFrame(dcol, fg_color="transparent")
+            row.pack(fill="x", pady=1)
+            ctk.CTkLabel(row, text="●", font=(T.UI_FONT, 9), text_color=color).pack(side="left")
+            ctk.CTkLabel(row, text=label, font=(T.UI_FONT, 12), text_color=T.TEXT_SECONDARY).pack(
+                side="left", padx=(6, 0))
+            self.legend[key] = ctk.CTkLabel(row, text="0", font=(T.MONO_FONT, 12, "bold"),
+                                            text_color=T.TEXT)
+            self.legend[key].pack(side="right")
+
+        right = ctk.CTkFrame(mid, fg_color="transparent")
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=(0, 6))
+        prot = card(right)
+        prot.pack(fill="x")
+        self.shield = ShieldPulse(prot, size=100, bg=T.SURFACE)
+        self.shield.pack(side="left", padx=(12, 2), pady=10)
         pt = ctk.CTkFrame(prot, fg_color="transparent")
-        pt.pack(side="left", fill="both", expand=True, padx=(4, 18), pady=16)
-        self.prot_title = ctk.CTkLabel(pt, text="Protección desactivada", font=(T.UI_FONT, 19, "bold"),
+        pt.pack(side="left", fill="both", expand=True, padx=(4, 16), pady=14)
+        self.prot_title = ctk.CTkLabel(pt, text="Protección desactivada", font=(T.UI_FONT, 17, "bold"),
                                        text_color=T.TEXT, anchor="w")
         self.prot_title.pack(anchor="w")
         self.prot_desc = ctk.CTkLabel(
-            pt, text="Actívala y Sentinel revisará cada archivo que llegue a tu carpeta Descargas.",
-            font=T.F_BODY, text_color=T.TEXT_SECONDARY, anchor="w", justify="left", wraplength=300)
-        self.prot_desc.pack(anchor="w", pady=(4, 12))
-        self.watch_btn = ctk.CTkButton(pt, text="Activar protección", width=190, height=40,
-                                       command=self.toggle, **self._btn("primary", 14))
+            pt, text="Actívala y Sentinel revisará cada archivo que llegue a Descargas.",
+            font=(T.UI_FONT, 12), text_color=T.TEXT_SECONDARY, anchor="w", justify="left",
+            wraplength=230)
+        self.prot_desc.pack(anchor="w", pady=(3, 10))
+        self.watch_btn = ctk.CTkButton(pt, text="Activar protección", width=170, height=36,
+                                       command=self.toggle, **self._btn("primary", 13))
         self.watch_btn.pack(anchor="w")
+        pick = card(right)
+        pick.pack(fill="both", expand=True, pady=(12, 0))
+        ctk.CTkLabel(pick, text="ANALIZAR A MANO", font=(T.MONO_FONT, 9, "bold"),
+                     text_color=T.TEXT_SECONDARY).pack(anchor="w", padx=18, pady=(12, 2))
+        self.drop = DropZone(pick, command=self.manual, height=92, bg=T.SURFACE)
+        self.drop.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
-        pick = ctk.CTkFrame(hero, fg_color=T.SURFACE, corner_radius=14)
-        pick.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ctk.CTkLabel(pick, text="ANALIZAR A MANO", font=(T.UI_FONT, 10, "bold"),
-                     text_color=T.TEXT_SECONDARY).pack(anchor="w", padx=18, pady=(14, 4))
-        self.drop = DropZone(pick, command=self.manual, height=104, bg=T.SURFACE)
-        self.drop.pack(fill="x", padx=14, pady=(0, 14))
+        recent = card(mid)
+        recent.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(6, 0))
+        self._card_header(recent, "Atendido recientemente", "Toda la actividad",
+                          lambda: self.show_view("activity"))
+        self.recent_box = ctk.CTkFrame(recent, fg_color="transparent")
+        self.recent_box.pack(fill="both", expand=True, padx=14, pady=(0, 10))
 
-        strip = ctk.CTkFrame(frame, fg_color="transparent")
-        strip.pack(fill="x", pady=(14, 0))
-        self.strip_cells = {}
-        for i, (key, label, color, bg) in enumerate((
-            ("total", "analizados", T.TEXT, T.SURFACE),
-            ("alerta", "peligro", T.DANGER, T.DANGER_BG),
-            ("pendiente", "revisar", T.WARNING, T.WARNING_BG),
-            ("limpio", "seguros", T.SUCCESS, T.SUCCESS_BG),
-        )):
-            strip.grid_columnconfigure(i, weight=1, uniform="strip")
-            cell = ctk.CTkFrame(strip, fg_color=bg, corner_radius=12)
-            cell.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0))
-            val = ctk.CTkLabel(cell, text="0", font=(T.MONO_FONT, 26, "bold"), text_color=color)
-            val.pack(side="left", padx=(18, 10), pady=10)
-            ctk.CTkLabel(cell, text=label, font=(T.UI_FONT, 13), text_color=T.TEXT_SECONDARY).pack(
-                side="left")
-            self.strip_cells[key] = val
+        steps = card(mid)
+        steps.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(6, 0))
+        sh = self._card_header(steps, "Tus siguientes pasos")
+        self.steps_count = ctk.CTkLabel(sh, text="", width=24, height=22, corner_radius=11,
+                                        font=(T.UI_FONT, 11, "bold"), text_color=T.TEXT_SECONDARY,
+                                        fg_color=T.ELEVATED)
+        self.steps_count.pack(side="right")
+        self.steps_box = ctk.CTkFrame(steps, fg_color="transparent")
+        self.steps_box.pack(fill="both", expand=True, padx=18, pady=(0, 10))
+        return frame
 
+    def _schedule_home(self):
+        if self._home_job is None:
+            self._home_job = self.after(60, self._refresh_home)
+
+    @staticmethod
+    def _when(entry):
+        ts = entry.get("ts")
+        if not ts:
+            return entry.get("hora", "")
+        if time.strftime("%Y%m%d", time.localtime(ts)) == time.strftime("%Y%m%d"):
+            return time.strftime("%H:%M", time.localtime(ts))
+        return time.strftime("%d/%m %H:%M", time.localtime(ts))
+
+    def _open_entry(self, entry):
+        self.show_view("activity")
+        self._show_detail(entry)
+
+    def _refresh_home(self):
+        self._home_job = None
+        s = self.stats
+        entries = [self.rows[k] for k in sorted(self.rows)]
+        window = entries[-20:]
+
+        def running(pred):
+            n, out = 0, []
+            for e in window:
+                n += 1 if pred(e) else 0
+                out.append(n)
+            return out
+
+        today = time.strftime("%Y%m%d")
+        hoy = sum(1 for e in entries if e.get("ts")
+                  and time.strftime("%Y%m%d", time.localtime(e["ts"])) == today)
+        self.kpis["total"].set(s["total"], f"{hoy} hoy" if s["total"] else "Aún no has analizado nada",
+                               running(lambda e: True))
+        self.kpis["alerta"].set(s["alerta"], "No los abras ni los ejecutes" if s["alerta"]
+                                else "Nada peligroso detectado",
+                                running(lambda e: e.get("estado") == "alerta"))
+        self.kpis["pendiente"].set(s["pendiente"], "Ábrelos solo si confías en el origen"
+                                   if s["pendiente"] else "Nada pendiente de revisar",
+                                   running(lambda e: e.get("estado") == "pendiente"))
+
+        total = s["total"]
+        if total:
+            pct = round(100 * s["limpio"] / total)
+            self.ring.set(pct, "limpio" if pct >= 80 else "pendiente" if pct >= 50 else "alerta",
+                          "seguros")
+            self.ring_text.configure(text=f"{s['limpio']} de {total} archivos son seguros.")
+        else:
+            self.ring.clear()
+            self.ring_text.configure(text="Analiza tu primer archivo para obtener tu puntuación.")
+
+        if s["alerta"]:
+            n = s["alerta"]
+            self.home_title.configure(text=f"Hay {n} archivo{'s' if n != 1 else ''} en peligro.")
+            self.home_sub.configure(text="Revisa la actividad y bórralos antes de abrirlos.",
+                                    text_color=T.DANGER)
+        elif self.watching:
+            self.home_title.configure(text="Tus descargas están protegidas.")
+            self.home_sub.configure(text="Sentinel revisa cada archivo nuevo en cuanto termina de llegar.",
+                                    text_color=T.TEXT_SECONDARY)
+        else:
+            self.home_title.configure(text="Tus descargas están sin vigilar.")
+            self.home_sub.configure(text="Activa la protección para revisar cada archivo que llegue.",
+                                    text_color=T.TEXT_SECONDARY)
+
+        self.timeline.set([(e.get("score", 0), e.get("estado", ""), e["archivo"]) for e in entries])
+        self.donut.set(s)
+        for key, lbl in self.legend.items():
+            lbl.configure(text=str(s[key]))
+        self.live_lbl.configure(text="●  en vivo" if self.watching else "●  en pausa",
+                                text_color=T.SUCCESS if self.watching else T.TEXT_SECONDARY)
+
+        sig = tuple((id(e), e.get("estado"), e.get("score")) for e in entries[-3:])
+        if sig != getattr(self, "_recent_sig", None):
+            self._recent_sig = sig
+            for w in self.recent_box.winfo_children():
+                w.destroy()
+            if entries:
+                for e in reversed(entries[-3:]):
+                    self._recent_row(self.recent_box, e)
+            else:
+                ctk.CTkLabel(self.recent_box, text="Todavía no hay actividad.\nActiva la protección o "
+                             "elige un archivo.", font=T.F_BODY, text_color=T.TEXT_SECONDARY,
+                             justify="center").pack(expand=True, pady=24)
+
+        steps = self._steps()
+        pending = [x for x in steps if not x[1]]
+        sig = tuple((x[0], x[1]) for x in steps)
+        if sig != getattr(self, "_steps_sig", None):
+            self._steps_sig = sig
+            for w in self.steps_box.winfo_children():
+                w.destroy()
+            self.steps_count.configure(text=str(len(pending)),
+                                       text_color=T.ON_PRIMARY if pending else T.TEXT_SECONDARY,
+                                       fg_color=T.PRIMARY if pending else T.ELEVATED)
+            for text, done, label, action in pending + [x for x in steps if x[1]]:
+                self._step_row(self.steps_box, text, done, label, action)
+
+        self._set_badge("activity", s["alerta"] + s["pendiente"],
+                        T.DANGER if s["alerta"] else T.PRIMARY)
+
+    def _steps(self):
+        s = self.stats
+        out = [("Activar la protección de Descargas", self.watching, "Activar", self.toggle)]
+        if s["alerta"]:
+            n = s["alerta"]
+            out.append((f"Revisar {n} archivo{'s' if n != 1 else ''} en peligro", False, "Revisar",
+                        lambda: self.show_view("activity")))
+        try:
+            has_vt = self._vt_state() == "disponible"
+        except Exception:
+            has_vt = False
+        out.append(("Conectar VirusTotal (opcional)", has_vt, "Configurar",
+                    lambda: self.show_view("config")))
+        try:
+            has_ai = bool(ai_analyst.status()["configured"])
+        except Exception:
+            has_ai = False
+        out.append(("Activar el analista IA (opcional)", has_ai, "Configurar",
+                    lambda: self.show_view("config")))
+        try:
+            has_report = REPORTS_DIR.exists() and any(REPORTS_DIR.glob("*.html"))
+        except OSError:
+            has_report = False
+        out.append(("Generar tu primer informe", has_report, "Ver informes",
+                    lambda: self.show_view("reports")))
+        return out
+
+    def _step_row(self, parent, text, done, action_text, action):
+        row = ctk.CTkFrame(parent, fg_color="transparent", height=32)
+        row.pack(fill="x", pady=1)
+        row.pack_propagate(False)
+        ctk.CTkLabel(row, text="✓" if done else "○", width=22, font=(T.UI_FONT, 14, "bold"),
+                     text_color=T.SUCCESS if done else T.PRIMARY).pack(side="left")
+        ctk.CTkLabel(row, text=text, font=(T.UI_FONT, 12), anchor="w",
+                     text_color=T.TEXT_DISABLED if done else T.TEXT).pack(side="left", padx=(6, 0))
+        if not done:
+            ctk.CTkButton(row, text=f"{action_text} →", width=70, height=24, fg_color="transparent",
+                          hover_color=T.ELEVATED, text_color=T.PRIMARY,
+                          font=(T.UI_FONT, 12, "bold"), command=action).pack(side="right")
+
+    def _recent_row(self, parent, entry):
+        estado = entry.get("estado", "")
+        color = _resolve_color(estado)
+        row = ctk.CTkFrame(parent, fg_color=T.ELEVATED, corner_radius=10, height=40)
+        row.pack(fill="x", pady=3)
+        row.pack_propagate(False)
+        ctk.CTkFrame(row, fg_color=color, width=4, height=1, corner_radius=2).pack(
+            side="left", fill="y", padx=(6, 8), pady=8)
+        ext, ext_color = ext_badge(entry["archivo"], entry.get("tipo"))
+        ctk.CTkLabel(row, text=ext, width=42, height=24, font=(T.MONO_FONT, 10, "bold"),
+                     text_color=ext_color, fg_color=T.BG, corner_radius=6).pack(side="left")
+        name = entry["archivo"] if len(entry["archivo"]) <= 40 else entry["archivo"][:39] + "…"
+        ctk.CTkLabel(row, text=name, font=(T.UI_FONT, 13, "bold"), text_color=T.TEXT,
+                     anchor="w").pack(side="left", padx=10)
+        ctk.CTkLabel(row, text=f" {T.STATE_TEXT.get(estado, estado.upper())} · {entry.get('score', 0)} ",
+                     font=(T.UI_FONT, 11, "bold"), text_color=color,
+                     fg_color=T.STATE_BG.get(estado, T.BG), corner_radius=6, height=24).pack(
+            side="right", padx=10)
+        ctk.CTkLabel(row, text=self._when(entry), font=(T.UI_FONT, 11),
+                     text_color=T.TEXT_SECONDARY).pack(side="right")
+        _bind_tree(row, "<Button-1>", lambda _e, e=entry: self._open_entry(e))
+        _bind_tree(row, "<Enter>", lambda _e, r=row: r.configure(fg_color=T.ROW_HOVER))
+        _bind_tree(row, "<Leave>", lambda _e, r=row: r.configure(fg_color=T.ELEVATED))
+        row.configure(cursor="hand2")
+
+    # ── vista de actividad ──
+    def _build_activity(self, parent):
+        frame = ctk.CTkFrame(parent, fg_color=T.BG, corner_radius=0)
         self.stage = ScanStage(frame, height=104)
         self.stage.pack(fill="x", pady=(6, 0))
 
@@ -523,6 +861,8 @@ class SentinelApp(ctk.CTk):
         self.prot_desc.configure(text="Cada archivo nuevo en Descargas se analiza en cuanto termina de llegar.")
         self.shield.set_active(True)
         self.stage.set_active(True)
+        self.timeline.set_active(True)
+        self._schedule_home()
 
     def _stop_watch(self):
         if self.watcher:
@@ -537,8 +877,21 @@ class SentinelApp(ctk.CTk):
             text="Actívala y Sentinel revisará cada archivo que llegue a tu carpeta Descargas.")
         self.shield.set_active(False)
         self.stage.set_active(False)
+        self.timeline.set_active(False)
+        self._schedule_home()
+
+    def _check_watcher(self):
+        """Si el hilo de vigilancia muere, la interfaz no puede seguir diciendo «activa»."""
+        if self.watching and self.watcher and not self.watcher.is_alive() \
+                and time.time() - getattr(self, "_watch_restart", 0) > 5:
+            self._watch_restart = time.time()
+            reason = self.watcher.last_error or "el hilo terminó inesperadamente"
+            self._stop_watch()
+            self._start_watch()
+            self.hint.configure(text=f"vigilancia reiniciada: {reason}"[:70])
 
     def _poll(self):
+        self._check_watcher()
         try:
             while True:
                 entry = self.queue.get_nowait()
@@ -562,11 +915,12 @@ class SentinelApp(ctk.CTk):
         row = len(self.rows) + 1
         entry["row"] = row
         entry.setdefault("hora", time.strftime("%H:%M:%S"))
+        entry.setdefault("ts", time.time())
         self.rows[row] = entry
         self.empty_box.pack_forget()
 
-        card = ctk.CTkFrame(self.table, fg_color=T.ELEVATED, corner_radius=10, border_width=1,
-                            border_color=T.ELEVATED, height=60)
+        card = tk.Frame(self.table, bg=T.ELEVATED, bd=0, highlightthickness=1,
+                        highlightbackground=T.ELEVATED, highlightcolor=T.ELEVATED, height=60)
         newest = next((e["card"] for e in reversed(list(self.rows.values()))
                        if e is not entry and e.get("card") and e["card"].winfo_exists()), None)
         if newest is not None:
@@ -584,30 +938,47 @@ class SentinelApp(ctk.CTk):
         if len(self.rows) > _MAX_ROWS:
             self._drop_oldest()
 
+    def _paint_card(self, card, bg, border=None):
+        card.configure(bg=bg, highlightbackground=border or bg, highlightcolor=border or bg)
+        for w in card.winfo_children():
+            if getattr(w, "_row_bg", False):
+                w.configure(bg=bg)
+            for g in w.winfo_children():
+                if getattr(g, "_row_bg", False):
+                    g.configure(bg=bg)
+
     def _fill_card(self, card, entry):
+        """Fila de actividad con widgets planos de Tk: las tarjetas redondeadas de CTk
+        dibujan un lienzo por widget y hacían que la lista se pegara al deslizar."""
         for w in card.winfo_children():
             w.destroy()
         estado = entry["estado"]
         color = _resolve_color(estado)
-        ctk.CTkFrame(card, fg_color=color, width=5, height=1, corner_radius=3).pack(
-            side="left", fill="y", padx=(6, 10), pady=10)
+
+        def label(parent, row_bg=True, **kw):
+            lbl = tk.Label(parent, bd=0, highlightthickness=0, **kw)
+            lbl._row_bg = row_bg
+            return lbl
+
+        tk.Frame(card, bg=color, width=5, bd=0).pack(side="left", fill="y", padx=(6, 10), pady=10)
         ext, ext_color = ext_badge(entry["archivo"], entry.get("tipo"))
-        ctk.CTkLabel(card, text=ext, width=48, height=32, font=(T.MONO_FONT, 11, "bold"),
-                     text_color=ext_color, fg_color=T.BG, corner_radius=6).pack(side="left", pady=12)
-        names = ctk.CTkFrame(card, fg_color="transparent", height=1)
-        names.pack(side="left", fill="x", expand=True, padx=12, pady=4)
+        label(card, row_bg=False, text=ext, width=5, font=(T.MONO_FONT, 10, "bold"), fg=ext_color,
+              bg=T.BG).pack(side="left", pady=14, ipady=3)
+        pill = label(card, row_bg=False, text=f"{T.STATE_TEXT.get(estado, estado.upper())} · "
+                     f"{entry.get('score', 0)}", font=(T.UI_FONT, 10, "bold"), fg=color,
+                     bg=T.STATE_BG.get(estado, T.BG), padx=8, pady=3)
+        pill.pack(side="right", padx=12)
+        names = tk.Frame(card, bg=T.ELEVATED, bd=0)
+        names._row_bg = True
+        names.pack(side="left", fill="x", expand=True, padx=12)
         name = entry["archivo"] if len(entry["archivo"]) <= 38 else entry["archivo"][:37] + "…"
-        ctk.CTkLabel(names, text=name, font=(T.UI_FONT, 13, "bold"), text_color=T.TEXT,
-                     anchor="w", height=22).pack(anchor="w")
+        label(names, text=name, font=(T.UI_FONT, 11, "bold"), fg=T.TEXT, bg=T.ELEVATED,
+              anchor="w").pack(anchor="w", pady=(10, 0))
         n = len([f for f in entry.get("findings", []) if confidence(f) != "baja"])
-        sub = f"{entry.get('hora', '')} · {entry.get('tipo', '').lower()} · " + (
+        sub = f"{self._when(entry)} · {entry.get('tipo', '').lower()} · " + (
             f"{n} indicio{'s' if n != 1 else ''}" if n else "sin indicios")
-        ctk.CTkLabel(names, text=sub, font=(T.UI_FONT, 11), text_color=T.TEXT_SECONDARY,
-                     anchor="w", height=18).pack(anchor="w")
-        ctk.CTkLabel(card, text=f" {T.STATE_TEXT.get(estado, estado.upper())} · {entry.get('score', 0)} ",
-                     font=(T.UI_FONT, 11, "bold"), text_color=color,
-                     fg_color=T.STATE_BG.get(estado, T.BG), corner_radius=6, height=26).pack(
-            side="right", padx=12)
+        label(names, text=sub, font=(T.UI_FONT, 9), fg=T.TEXT_SECONDARY, bg=T.ELEVATED,
+              anchor="w").pack(anchor="w")
         _bind_tree(card, "<Button-1>", lambda _e, e=entry: self._show_detail(e))
         _bind_tree(card, "<Enter>", lambda _e, e=entry: self._hover(e, True))
         _bind_tree(card, "<Leave>", lambda _e, e=entry: self._hover(e, False))
@@ -617,14 +988,14 @@ class SentinelApp(ctk.CTk):
         card = entry.get("card")
         if not card or not card.winfo_exists() or self.selected is entry:
             return
-        card.configure(fg_color=T.ROW_HOVER if on else T.ELEVATED)
+        self._paint_card(card, T.ROW_HOVER if on else T.ELEVATED)
 
     def _pulse_card(self, card):
         for i in range(_PULSE_STEPS, -1, -1):
             shade = _hex_rc(T.ELEVATED, int(22 * i / _PULSE_STEPS))
             self.after((_PULSE_STEPS - i) * _MOTION_MS * 2,
                        lambda s=shade: card.winfo_exists() and self.selected is None and
-                       card.configure(fg_color=s))
+                       self._paint_card(card, s))
 
     def _drop_oldest(self):
         oldest = min(self.rows)
@@ -654,8 +1025,33 @@ class SentinelApp(ctk.CTk):
         self._refresh_stats()
 
     def _refresh_stats(self):
-        for key in ("total", "alerta", "pendiente", "limpio"):
-            self.strip_cells[key].configure(text=str(self.stats[key]))
+        self._schedule_home()
+        self._schedule_save()
+
+    def _schedule_save(self):
+        if self.demo or self._loading or self._save_job is not None:
+            return
+        self._save_job = self.after(2000, self._save_history)
+
+    def _save_history(self):
+        self._save_job = None
+        history.save([self.rows[k] for k in sorted(self.rows)])
+
+    def _load_history(self):
+        items = history.load()
+        self._loading = True
+
+        def step():
+            for e in items[:8]:
+                e["staged"] = True
+                self._add_row(e)
+            del items[:8]
+            if items:
+                self.after(25, step)
+            else:
+                self._loading = False
+
+        step()
 
     # ── detalle ──
     def _show_detail(self, entry):
@@ -663,14 +1059,20 @@ class SentinelApp(ctk.CTk):
         self.selected = entry
         if previous is not None and previous is not entry and previous.get("card") \
                 and previous["card"].winfo_exists():
-            previous["card"].configure(fg_color=T.ELEVATED, border_color=T.ELEVATED)
+            self._paint_card(previous["card"], T.ELEVATED, T.ELEVATED)
         card = entry.get("card")
         estado = entry["estado"]
         color = _resolve_color(estado)
         if card and card.winfo_exists():
-            card.configure(fg_color=T.ROW_SELECTED, border_color=color)
+            self._paint_card(card, T.ROW_SELECTED, color)
 
         title, reason, action = T.VERDICT_TEXT.get(estado, (estado, "", ""))
+        errors = entry.get("errors") or []
+        if estado == "pendiente" and errors and not [f for f in entry.get("findings", [])
+                                                     if confidence(f) != "baja"]:
+            title = "No se pudo revisar del todo"
+            reason = errors[0][:140]
+            action = "Trátalo como no verificado: ábrelo solo si confías en quien te lo envió."
         self.gauge.set(entry.get("score", 0), estado, "riesgo / 100")
         self.detail_pill.configure(text=f"  {T.STATE_TEXT.get(estado, estado.upper())}  ",
                                    text_color=color, fg_color=T.STATE_BG.get(estado, T.ELEVATED))
@@ -687,6 +1089,11 @@ class SentinelApp(ctk.CTk):
         if engine:
             self.detail_box.insert("end", "MOTORES USADOS\n", "head")
             self.detail_box.insert("end", f"  {engine.replace('multi:', '').replace('+', ' · ')}\n\n", "dim")
+        if entry.get("errors"):
+            self.detail_box.insert("end", "AVISOS DEL ANÁLISIS\n", "head")
+            for err in entry["errors"]:
+                self.detail_box.insert("end", f"  {err}\n", "dim")
+            self.detail_box.insert("end", "\n")
         self._render_iocs(entry)
         self._render_ai(entry)
 
@@ -703,6 +1110,9 @@ class SentinelApp(ctk.CTk):
             msg = {"limpio": "Ningún motor encontró nada que señalar.",
                    "pendiente": "El análisis no pudo completarse. Vuelve a intentarlo."}.get(
                 entry["estado"], "Sin coincidencias.")
+            if entry.get("errors"):
+                msg = "El análisis no pudo completarse:\n" + "\n".join(
+                    f"· {e[:150]}" for e in entry["errors"][:4])
             ctk.CTkLabel(self.why_box, text=msg, font=T.F_BODY, text_color=T.TEXT_SECONDARY).pack(pady=24)
             return
 
@@ -800,6 +1210,7 @@ class SentinelApp(ctk.CTk):
         entry["ai_text"] = result["text"]
         entry["ai_meta"] = {"provider": result["provider"], "model": result["model"],
                             "cached": result["cached"]}
+        self._schedule_save()
         if self.selected is entry:
             self.tabs.set("Herramientas")
             self._render_ai(entry)
@@ -843,9 +1254,12 @@ class SentinelApp(ctk.CTk):
             entry["trace_events"] = result.get("events", [])
             entry["trace_findings"] = result.get("findings", [])
             events = result.get("events", [])
-            body = "  sin llamadas peligrosas observadas\n" if not events else "".join(
+            body = "  sin llamadas peligrosas en el código\n" if not events else "".join(
                 f"  L{ev['line']:<4} {ev['evento']:<16} {ev['args']}\n" for ev in events)
-            self._tools_note("TRAZA (intérprete instrumentado; aísla builtins, no el proceso)", body)
+            note = result.get("error")
+            if note:
+                body += f"  no se pudo completar: {note}\n"
+            self._tools_note("TRAZA ESTÁTICA (el archivo no se ejecuta)", body)
         finally:
             self.trace_btn.configure(text="Trazar código", state="normal", **T.button_style("secondary"))
 
@@ -871,9 +1285,14 @@ class SentinelApp(ctk.CTk):
         threading.Thread(target=self._manual_worker, args=(path,), daemon=True).start()
 
     def _manual_worker(self, path):
+        # Quien elige un archivo a mano espera un veredicto: se analiza aunque el
+        # vigilante lo ignoraría (temporal, oculto, dentro de la carpeta de Sentinel).
         tipo = classify(path)
+        if tipo == "IGNORAR":
+            tipo = "CÓDIGO" if Path(path).suffix.lower() in CODE_EXTENSIONS else "BINARIO"
         entry = {
             "hora": time.strftime("%H:%M:%S"),
+            "ts": time.time(),
             "archivo": Path(path).name,
             "ruta": path,
             "tipo": tipo,
@@ -883,18 +1302,13 @@ class SentinelApp(ctk.CTk):
             "engine": "",
             "online": False,
         }
-        try:
-            if tipo in ("CÓDIGO", "BINARIO"):
-                result = analyze(path)
-                entry["estado"] = result["estado"]
-                entry["score"] = result.get("score", 0)
-                entry["findings"] = result["findings"]
-                entry["engine"] = result.get("engine", "")
-            elif tipo == "IGNORAR":
-                entry["estado"] = "limpio"
-                entry["engine"] = "omitido (descarga a medias o archivo de Sentinel)"
-        except Exception as exc:
-            entry["engine"] = f"error: {exc}"
+        result = analyze(path, online=self._vt_state() == "disponible", force=True)
+        entry["estado"] = result["estado"]
+        entry["score"] = result.get("score", 0)
+        entry["findings"] = result["findings"]
+        entry["engine"] = result.get("engine", "")
+        if result.get("errors"):
+            entry["errors"] = result["errors"]
         self.after(0, lambda: self._manual_done(entry))
 
     def _manual_done(self, entry):
@@ -903,6 +1317,7 @@ class SentinelApp(ctk.CTk):
         if not self.watching:
             self.stage.set_active(False)
         self._add_row(entry)
+        self.show_view("activity")
         self._show_detail(entry)
 
 

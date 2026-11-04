@@ -115,16 +115,19 @@ def analyze_pe(path, check_signature=True):
 
 def _imports(pe):
     names = set()
-    try:
-        pe.parse_data_directories(
-            directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"],
-                         pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR"]])
-    except Exception:
-        return names
-    for entry in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []):
-        for imp in entry.imports:
-            if imp.name:
-                names.add(imp.name.decode("latin-1", errors="replace"))
+    # Cada directorio por separado: que falle uno no debe dejar la lista vacía
+    # y provocar un falso «sin imports».
+    for directory in ("IMAGE_DIRECTORY_ENTRY_IMPORT", "IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT",
+                      "IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR"):
+        try:
+            pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY[directory]])
+        except Exception:
+            continue
+    for attr in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT"):
+        for entry in getattr(pe, attr, []):
+            for imp in entry.imports:
+                if imp.name:
+                    names.add(imp.name.decode("latin-1", errors="replace"))
     return names
 
 
@@ -183,6 +186,9 @@ def _entry(pe, ep_section, findings):
     info = {"rva": ep, "section": ep_section[1] if ep_section else None, "disasm": []}
     if not ep or not _HAVE_CAPSTONE:
         return info, None if ep else "sin punto de entrada (DLL de solo recursos)"
+
+    if pe.FILE_HEADER.Machine not in (0x14C, 0x8664):
+        return info, "arquitectura distinta de x86: no se desensambla"
 
     try:
         code = pe.get_data(ep, ENTRY_BYTES)

@@ -63,6 +63,14 @@ def _weight(f):
     return (f.get("peso") or SEVERITY_SCORE.get(f.get("severidad"), 6)) * CONFIDENCE_FACTOR[confidence(f)]
 
 
+def _key(f):
+    """Identidad de un indicio. Cada regla YARA es distinta aunque compartan rule_id."""
+    rule_id = f.get("rule_id")
+    if rule_id == "yara_match":
+        return f"yara:{f.get('regla')}"
+    return rule_id or f.get("regla")
+
+
 def weighted_score(findings):
     if not findings:
         return 0
@@ -70,7 +78,7 @@ def weighted_score(findings):
     # Cada regla cuenta una vez: cien getattr no son cien indicios distintos.
     best = {}
     for f in findings:
-        key = f.get("rule_id") or f.get("regla")
+        key = _key(f)
         best[key] = max(best.get(key, 0.0), _weight(f))
     low = sum(w for k, w in best.items() if _conf_of(findings, k) == "baja")
     weights = sorted((w for k, w in best.items() if _conf_of(findings, k) != "baja"), reverse=True)
@@ -81,7 +89,7 @@ def weighted_score(findings):
 
 
 def _conf_of(findings, key):
-    levels = [confidence(f) for f in findings if (f.get("rule_id") or f.get("regla")) == key]
+    levels = [confidence(f) for f in findings if _key(f) == key]
     for level in ("alta", "media", "baja"):
         if level in levels:
             return level
@@ -101,7 +109,7 @@ def estado_from_score(score, findings):
     findings = finalize(list(findings))
     if any(confidence(f) == "alta" and f.get("severidad") in _STRONG_SEVERITY for f in findings):
         return "alerta"
-    solid = {f.get("rule_id") or f.get("regla") for f in findings if confidence(f) != "baja"}
+    solid = {_key(f) for f in findings if confidence(f) != "baja"}
     if score >= VERDICT_ALERT_SCORE and len(solid) >= 2:
         return "alerta"
     if solid or score >= VERDICT_REVIEW_SCORE:

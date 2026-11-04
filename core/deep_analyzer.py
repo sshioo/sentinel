@@ -7,6 +7,7 @@ from config import (
     DANGEROUS_CALLS,
     DANGEROUS_MODULE_CALLS,
     ENCODED_STR_MIN_LEN,
+    MAX_READ_BYTES,
     MAX_SNIPPET_LEN,
     SEVERITY_SCORE,
 )
@@ -149,12 +150,15 @@ class DeepAnalyzer(ast.NodeVisitor):
 
 def deep_analyze(path):
     try:
-        source = Path(path).read_text(encoding="utf-8", errors="replace")
+        with open(path, "rb") as fh:
+            source = fh.read(MAX_READ_BYTES).decode("utf-8", errors="replace")
     except OSError as exc:
-        return {"score": 0, "estado": "alerta", "findings": [], "error": str(exc)}
+        return {"score": 0, "estado": "pendiente", "findings": [], "error": str(exc)}
 
     try:
         tree = ast.parse(source)
+        analyzer = DeepAnalyzer(source)
+        analyzer.visit(tree)
     except SyntaxError as exc:
         return {
             "score": 0,
@@ -162,9 +166,15 @@ def deep_analyze(path):
             "findings": [],
             "error": f"SyntaxError en línea {exc.lineno}: {exc.msg}",
         }
-
-    analyzer = DeepAnalyzer(source)
-    analyzer.visit(tree)
+    except (RecursionError, MemoryError, ValueError) as exc:
+        # Una expresión anidada a miles de niveles no es código normal: se avisa
+        # en lugar de dejar que el error tumbe al vigilante.
+        return {
+            "score": 0,
+            "estado": "pendiente",
+            "findings": [],
+            "error": f"estructura demasiado profunda o grande para analizarla ({type(exc).__name__})",
+        }
 
     findings = finalize(analyzer.findings)
     score = weighted_score(findings)

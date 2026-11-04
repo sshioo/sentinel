@@ -13,3 +13,5 @@ build/
 packaging/version_info.txt
 *.log
 .pytest_cache/
+history.json
+reports/out/
