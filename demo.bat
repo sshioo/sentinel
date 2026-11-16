@@ -1,2 +1,3 @@
 @echo off
-call "%~dp0run.bat" --demo
+rem La demo con muestras ya no existe: Sentinel arranca con la lista vacia.
+call "%~dp0run.bat"

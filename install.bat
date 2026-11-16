@@ -26,7 +26,7 @@ echo [4/4] Comprobando el entorno
 ".venv\Scripts\python.exe" tools\selfcheck.py
 
 echo.
-echo Listo. Abre Sentinel con run.bat, o con demo.bat para la demo.
+echo Listo. Abre Sentinel con run.bat.
 pause
 exit /b 0
 

@@ -9,13 +9,14 @@ from core import (
     pe_analyzer,
     reverse_engineer,
     signature,
+    static_re,
     yara_scanner,
 )
-from core.scoring import attenuate_trusted, estado_from_score, finalize, weighted_score
+from core.scoring import attenuate_trusted, estado_from_score, finalize, reasons, weighted_score
 
 # Motores cuyo fallo deja el veredicto a medias. VirusTotal y capa son
 # opcionales: sin clave o sin reglas no se considera un análisis incompleto.
-CORE_ENGINES = {"binary", "yara", "pe", "pdf", "office", "archivo", "nombre"}
+CORE_ENGINES = {"binary", "ingenieria_inversa", "yara", "pe", "pdf", "office", "archivo", "nombre"}
 
 
 def _safe(engine, fn, *args, **kwargs):
@@ -37,6 +38,11 @@ def analyze_binary(path, online=True, deep=True):
 
     base = _safe("binary", binary_analyzer.analyze_binary, path)
     results.append(base)
+    magic = tuple((base.get("meta") or {}).get("magic") or ())
+    is_pe = pe_analyzer.is_pe(path)
+    # Ingeniería inversa primero: estructura, ejecutables ocultos, cargas
+    # codificadas, shellcode y cadenas. Es el núcleo del veredicto.
+    results.append(_safe("ingenieria_inversa", static_re.analyze, path, magic, is_pe, deep))
     results.append(_safe("yara", yara_scanner.scan, path))
     results.append(_safe("nombre", lambda: {"engine": "nombre", "score": 0, "estado": "limpio",
                                             "findings": name_checks.check(path), "error": None}))
@@ -45,7 +51,7 @@ def analyze_binary(path, online=True, deep=True):
         results.append(_safe("archivo", archive_analyzer.analyze_archive, path))
 
     sig = None
-    if pe_analyzer.is_pe(path):
+    if is_pe:
         pe = _safe("pe", pe_analyzer.analyze_pe, path)
         results.append(pe)
         sig = (pe.get("meta") or {}).get("firma")
@@ -97,7 +103,9 @@ def _merge(results, sig=None):
     for r in results:
         engine = r.get("engine", "?")
         engines.append(engine)
-        findings.extend(r.get("findings", []))
+        for f in r.get("findings", []):
+            f.setdefault("motor", engine)
+            findings.append(f)
         if r.get("error"):
             errors.append(f"{engine}: {r['error']}")
             incomplete = incomplete or engine in CORE_ENGINES
@@ -116,6 +124,7 @@ def _merge(results, sig=None):
         "score": score,
         "estado": estado,
         "findings": findings,
+        "razones": reasons(findings),
         "engine": "multi:" + "+".join(engines),
         "errors": errors,
         "incomplete": incomplete,

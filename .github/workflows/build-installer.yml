@@ -1,0 +1,51 @@
+# Construye el instalador de Windows (Sentinel-Setup-<versión>.exe) y lo adjunta
+# a la Release. Se dispara al publicar una etiqueta vX.Y.Z o a mano desde la
+# pestaña Actions. Todo corre en un Windows de GitHub, sin tocar tu equipo.
+name: Construir instalador
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Descargar reglas de capa (~15 MB)
+        run: python tools/setup_rules.py
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Construir Sentinel.exe y el instalador
+        run: python packaging/build.py
+
+      - name: Guardar el instalador como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sentinel-instalador
+          path: dist/Sentinel-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Adjuntar a la Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Sentinel-Setup-*.exe
