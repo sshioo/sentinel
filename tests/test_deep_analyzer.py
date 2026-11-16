@@ -35,7 +35,8 @@ check("limpio sin hallazgos", clean["findings"], [])
 ev = _scan("payload = input()\neval(payload)\n")
 check("eval detectado", "eval_exec" in rules_of(ev), True)
 check("eval score > 0", ev["score"] > 0, True)
-check("eval aislado queda en revisión", ev["estado"], "pendiente")
+# 1.3: un eval suelto es una señal débil (está en medio stdlib); solo cuenta combinado.
+check("eval aislado es señal débil", ev["estado"], "limpio")
 check("eval mitre", ev["findings"][0]["mitre_id"], "T1059.006")
 check("eval linea", ev["findings"][0]["line"], 2)
 

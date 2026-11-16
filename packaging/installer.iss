@@ -38,9 +38,8 @@ Source: "..\.env.example"; DestDir: "{localappdata}\Sentinel"; DestName: ".env";
 
 [Icons]
 Name: "{group}\Sentinel"; Filename: "{app}\Sentinel.exe"
-Name: "{group}\Sentinel (demo)"; Filename: "{app}\Sentinel.exe"; Parameters: "--demo"; Comment: "Analiza seis muestras inocuas"
 Name: "{group}\Desinstalar Sentinel"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\Sentinel"; Filename: "{app}\Sentinel.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Sentinel.exe"; Description: "Abrir Sentinel en modo demo"; Parameters: "--demo"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Sentinel.exe"; Description: "Abrir Sentinel"; Flags: nowait postinstall skipifsilent

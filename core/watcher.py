@@ -9,7 +9,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from config import POLL_INTERVAL_S, STABLE_MAX_RETRIES, STABLE_WINDOW_S, WATCH_DIR
-from core.analyzer import analyze
+from core.analyzer import analyze, entry_extras
 from core.dispatcher import classify
 
 _DONE_LIMIT = 2000
@@ -122,6 +122,7 @@ class _Handler(FileSystemEventHandler):
         entry["engine"] = result.get("engine", "")
         if result.get("errors"):
             entry["errors"] = result["errors"]
+        entry.update(entry_extras(result))
 
         self.queue.put(entry)
 

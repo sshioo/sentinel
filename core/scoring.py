@@ -112,6 +112,12 @@ def estado_from_score(score, findings):
     solid = {_key(f) for f in findings if confidence(f) != "baja"}
     if score >= VERDICT_ALERT_SCORE and len(solid) >= 2:
         return "alerta"
+    # Corroboración: tres motores independientes (p. ej. ingeniería inversa,
+    # YARA y capa) que ven indicios serios a la vez no son casualidad.
+    serious = {f.get("motor") for f in findings
+               if f.get("motor") and confidence(f) != "baja" and f.get("severidad") in _STRONG_SEVERITY}
+    if len(serious) >= 3 and score >= VERDICT_REVIEW_SCORE:
+        return "alerta"
     if solid or score >= VERDICT_REVIEW_SCORE:
         return "pendiente"
     return "limpio"
@@ -121,3 +127,17 @@ def verdict(findings):
     findings = finalize(findings)
     score = weighted_score(findings)
     return findings, score, estado_from_score(score, findings)
+
+
+def reasons(findings, limit=3):
+    """Los indicios que más pesan en el veredicto, en una línea cada uno."""
+    best = {}
+    for f in finalize(list(findings)):
+        if confidence(f) == "baja":
+            continue
+        key = _key(f)
+        w = _weight(f)
+        if w > best.get(key, (0, None))[0]:
+            best[key] = (w, f)
+    top = sorted(best.values(), key=lambda x: -x[0])[:limit]
+    return [f.get("regla", "") for _, f in top]

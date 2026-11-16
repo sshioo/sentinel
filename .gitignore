@@ -15,3 +15,7 @@ packaging/version_info.txt
 .pytest_cache/
 history.json
 reports/out/
+muestras_prueba/
+ui/app_anterior.py
+settings.json
+quarantine/

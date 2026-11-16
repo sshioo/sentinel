@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-VERSION = "1.2.0-beta.2"
+VERSION = "1.3.0"
 
 # Empaquetado con PyInstaller, el código y las reglas viven en una carpeta de
 # solo lectura (Program Files). Informes, caché y .env van a la carpeta del
@@ -310,6 +310,66 @@ ENTROPY_EXEMPT_FAMILIES = {
 }
 
 BINARY_RULES = {
+    "re_deobfuscated": {
+        "titulo": "Cadenas ocultas que forman comandos peligrosos",
+        "severidad": "alto",
+        "mitre": ("T1027.010", "Obfuscated Files or Information: Command Obfuscation"),
+    },
+    "re_embedded_pe": {
+        "titulo": "Ejecutable oculto dentro del archivo",
+        "severidad": "crítico",
+        "mitre": ("T1027.009", "Obfuscated Files or Information: Embedded Payloads"),
+    },
+    "re_dropper_pe": {
+        "titulo": "El programa lleva otro ejecutable dentro",
+        "severidad": "medio",
+        "mitre": ("T1027.009", "Obfuscated Files or Information: Embedded Payloads"),
+    },
+    "re_xor_pe": {
+        "titulo": "Ejecutable cifrado con XOR dentro del archivo",
+        "severidad": "crítico",
+        "mitre": ("T1140", "Deobfuscate/Decode Files or Information"),
+    },
+    "re_encoded_pe": {
+        "titulo": "Ejecutable codificado (base64/hex) dentro del archivo",
+        "severidad": "crítico",
+        "mitre": ("T1027", "Obfuscated Files or Information"),
+    },
+    "re_encoded_script": {
+        "titulo": "Código oculto en una cadena codificada",
+        "severidad": "alto",
+        "mitre": ("T1027", "Obfuscated Files or Information"),
+    },
+    "re_overlay": {
+        "titulo": "Datos pegados tras el final del formato",
+        "severidad": "medio",
+        "mitre": ("T1027.009", "Obfuscated Files or Information: Embedded Payloads"),
+    },
+    "re_shellcode": {
+        "titulo": "Shellcode fuera de un ejecutable",
+        "severidad": "crítico",
+        "mitre": ("T1055", "Process Injection"),
+    },
+    "re_api_strings": {
+        "titulo": "API de Windows peligrosas en un archivo que no es un programa",
+        "severidad": "alto",
+        "mitre": ("T1106", "Native API"),
+    },
+    "re_persistence_strings": {
+        "titulo": "Referencias a mecanismos de arranque automático",
+        "severidad": "medio",
+        "mitre": ("T1547.001", "Boot or Logon Autostart Execution: Registry Run Keys"),
+    },
+    "re_antianalysis_strings": {
+        "titulo": "Comprueba si lo están analizando (máquina virtual o depurador)",
+        "severidad": "medio",
+        "mitre": ("T1497", "Virtualization/Sandbox Evasion"),
+    },
+    "re_ransom_strings": {
+        "titulo": "Textos propios de ransomware",
+        "severidad": "crítico",
+        "mitre": ("T1486", "Data Encrypted for Impact"),
+    },
     "extension_mismatch": {
         "titulo": "Extensión no coincide con el contenido",
         "severidad": "crítico",
@@ -664,6 +724,18 @@ PDF_DANGER_KEYS = {
 # usos legítimos conocidos. baja: habitual en software normal; solo cuenta como
 # contexto. Las reglas sin entrada son "media".
 RULE_CONFIDENCE = {
+    "re_deobfuscated": "media",
+    "re_embedded_pe": "alta",
+    "re_xor_pe": "alta",
+    "re_encoded_pe": "alta",
+    "re_encoded_script": "media",
+    "re_dropper_pe": "baja",
+    "re_overlay": "media",
+    "re_shellcode": "media",
+    "re_api_strings": "media",
+    "re_persistence_strings": "media",
+    "re_antianalysis_strings": "baja",
+    "re_ransom_strings": "media",
     "extension_mismatch": "alta",
     "executable_content": "alta",
     "double_extension": "alta",
@@ -692,7 +764,8 @@ RULE_CONFIDENCE = {
     "pe_no_imports": "baja",
     "vba_macro": "media",
     "pdf_obfuscation": "baja",
-    "eval_exec": "media",
+    "pdf_openaction": "baja",
+    "eval_exec": "baja",
     "dynamic_import": "baja",
     "getattr_dynamic": "baja",
     "b64_decode": "baja",
@@ -718,7 +791,7 @@ RULE_CONFIDENCE = {
 
 # Hallazgos que una firma digital válida no atenúa: un instalador firmado que
 # se llama factura.pdf.exe sigue siendo un engaño.
-TRUST_OVERRIDE = {"extension_mismatch", "executable_content", "double_extension",
+TRUST_OVERRIDE = {"re_embedded_pe", "re_xor_pe", "re_encoded_pe", "extension_mismatch", "executable_content", "double_extension",
                   "rtl_override", "disguised_pe", "vt_detection", "capa_malware_family"}
 
 COMPOUND_RULES = [

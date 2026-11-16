@@ -9,3 +9,4 @@ capstone~=5.0
 flare-capa==10.0.0
 python-dotenv~=1.2
 requests~=2.34
+tkinterdnd2~=0.4

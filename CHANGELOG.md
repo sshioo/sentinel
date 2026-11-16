@@ -1,5 +1,34 @@
 # Cambios
 
+## 1.3.0
+
+### Ingeniería inversa como núcleo del escaneo
+- Nuevo motor `core/static_re.py`, el primero que se ejecuta sobre cualquier archivo:
+  estructura y datos pegados tras el fin del formato, tallado de ejecutables ocultos
+  (también cifrados con XOR), decodificación de base64, hex y `-EncodedCommand`,
+  shellcode y análisis de cadenas (inyección, espionaje, persistencia, anti-VM, rescate).
+- Los ejecutables extraídos se analizan y desensamblan (pefile, capstone, capa) igual
+  que uno suelto. Pruebas en `tests/test_static_re.py`.
+- Desofuscación de scripts: Sentinel reconstruye cadenas partidas por
+  concatenación (`'Downl'+'oadStr'+'ing'`) y secuencias `Chr(87)&Chr(83)` de
+  VBScript/VBA antes de analizar. Solo cuenta lo que aparece tras unir los
+  trozos y no estaba ya entero, para no marcar código legítimo.
+
+### Veredicto
+- Corroboración: tres motores independientes con indicios serios dan «Peligro».
+- Cada resultado explica sus motivos principales.
+- Menos falsos positivos: `eval` suelto, `/OpenAction` de PDF y las reglas de texto
+  en código Python con árbol sintáctico pasan a señal débil.
+
+### Interfaz
+- Una sola pantalla con barra de estado, filtros, lista y veredicto.
+- Pestaña «Ingeniería inversa» en el detalle.
+- Secciones nuevas: Cuarentena (restaurar o eliminar) y Ajustes (vigilar al abrir,
+  cuarentena automática, vaciar lista).
+- Se quitan el analista IA, la vista Motores y la demo con muestras: la lista arranca vacía.
+- Informes rediseñados: veredicto, motivos, ingeniería inversa, pruebas, MITRE, IOCs e
+  identidad del archivo; imprimibles y se abren al generarlos.
+
 ## 1.2.0-beta.2
 
 Revisión del motor de análisis. Cada punto tiene su prueba en

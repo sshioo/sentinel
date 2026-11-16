@@ -2,8 +2,8 @@ import re
 from pathlib import Path
 
 from config import RULES, SEVERITY_SCORE
-from core import name_checks, yara_scanner
-from core.scoring import estado_from_score, finalize, weighted_score
+from core import name_checks, static_re, yara_scanner
+from core.scoring import estado_from_score, finalize, reasons, weighted_score
 from core.deep_analyzer import deep_analyze
 from core.pipeline import analyze_binary
 
@@ -63,11 +63,22 @@ def analyze_code(path, online=False):
 
     deep = deep_analyze(path)
     deep_findings = _deep_findings(deep["findings"])
+    if not deep["error"]:
+        # Con el árbol sintáctico disponible, la búsqueda por texto solo aporta
+        # contexto: el AST ya sabe si «eval» es una llamada o un comentario.
+        for f in findings:
+            f["confianza"] = "baja"
     findings = _merge(findings, deep_findings)
 
     yara = yara_scanner.scan(path)
     findings = _merge(findings, _yara_findings(yara["findings"]))
     findings = _merge(findings, _disguised_exe_findings(path))
+    # Ingeniería inversa del script: decodifica base64/hex/-EncodedCommand y
+    # busca ejecutables o código escondidos dentro de las cadenas.
+    re_result = static_re.analyze(path, (), False, deep=False)
+    for f in re_result["findings"]:
+        f.setdefault("motor", "ingenieria_inversa")
+    findings = _merge(findings, re_result["findings"])
     findings = finalize(_merge(findings, name_checks.check(path)))
 
     score = weighted_score(findings)
@@ -90,8 +101,12 @@ def analyze_code(path, online=False):
     engine = "stub+ast"
     if yara["findings"]:
         engine += "+yara"
+    engine += "+ingenieria_inversa"
+    if re_result.get("error"):
+        errors.append(f"ingenieria_inversa: {re_result['error']}")
     return {"score": score, "estado": estado, "findings": findings, "engine": engine,
-            "errors": errors, "incomplete": incomplete}
+            "errors": errors, "incomplete": incomplete, "razones": reasons(findings),
+            "meta": {"ingenieria_inversa": re_result.get("meta") or {}}}
 
 
 def _yara_findings(yara_findings):
@@ -179,3 +194,38 @@ def _read_text(path, limit=2_000_000):
     with open(path, "rb") as fh:
         raw = fh.read(limit)
     return raw.decode("utf-8", errors="replace")
+
+
+def entry_extras(result):
+    """Lo que la interfaz y los informes guardan de un análisis, además de los hallazgos:
+    los motivos del veredicto, la identidad del archivo y la ingeniería inversa."""
+    meta = result.get("meta") or {}
+    binary = meta.get("binary") or {}
+    re_meta = meta.get("ingenieria_inversa") or {}
+    capa = meta.get("capa") or {}
+    pe = meta.get("pe") or {}
+    extras = {
+        "razones": result.get("razones") or [],
+        "info": {k: binary[k] for k in ("sha256", "md5", "size", "entropy", "magic") if k in binary},
+        "re": {
+            "pasos": list(re_meta.get("pasos") or []),
+            "capacidades": list(re_meta.get("capacidades") or []),
+            "tallados": list(re_meta.get("tallados") or []),
+            "capa": [c.get("nombre") for c in capa.get("capacidades") or []][:60],
+            "capa_omitido": capa.get("omitido"),
+        },
+    }
+    if pe:
+        ep = pe.get("entry_point") or {}
+        sig = pe.get("firma") or {}
+        extras["re"]["pe"] = {
+            "arquitectura": pe.get("arquitectura"),
+            "tipo": pe.get("tipo"),
+            "dotnet": pe.get("dotnet"),
+            "imports": pe.get("count"),
+            "secciones": [f"{s.get('name')} · entropía {s.get('entropy')}" for s in pe.get("sections") or []][:12],
+            "entrada": (ep.get("disasm") or [])[:12],
+            "entrada_nota": pe.get("entry_note"),
+            "firma": sig.get("signer") or sig.get("status"),
+        }
+    return extras

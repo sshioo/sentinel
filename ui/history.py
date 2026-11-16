@@ -1,4 +1,4 @@
-"""Historial de análisis entre sesiones, para que el panel no arranque vacío."""
+"""Historial de los archivos que el usuario ha analizado, entre sesiones."""
 import json
 import os
 
@@ -6,7 +6,7 @@ from config import USER_DIR
 
 PATH = USER_DIR / "history.json"
 KEYS = ("archivo", "ruta", "tipo", "estado", "score", "findings", "engine", "hora", "ts",
-        "online", "iocs", "ai_text", "ai_meta", "errors")
+        "online", "iocs", "errors", "razones", "info", "re", "cuarentena")
 
 
 def load(limit=60):
@@ -26,3 +26,7 @@ def save(entries, limit=60):
         os.replace(tmp, PATH)
     except OSError:
         pass
+
+
+def clear():
+    save([])

@@ -1,34 +1,34 @@
 import tkinter.font as tkfont
 
-BG = "#0E0F12"
-SURFACE = "#15171C"
-ELEVATED = "#1C1F26"
-BORDER = "#2B2E36"
-ELEVATED_HOVER = "#23262E"
-ROW_HOVER = "#1F232B"
-ROW_SELECTED = "#24262D"
+BG = "#08090B"
+SURFACE = "#0E1013"
+ELEVATED = "#15181C"
+BORDER = "#23272E"
+ELEVATED_HOVER = "#1B1F24"
+ROW_HOVER = "#13161A"
+ROW_SELECTED = "#181C21"
 
-PRIMARY = "#E8A33D"
-PRIMARY_HOVER = "#F2B653"
-PRIMARY_ACTIVE = "#CC892A"
-ON_PRIMARY = "#17130D"
+PRIMARY = "#FFB224"
+PRIMARY_HOVER = "#FFC457"
+PRIMARY_ACTIVE = "#E09A10"
+ON_PRIMARY = "#0A0A0A"
 
-TEXT = "#F4F1E8"
-TEXT_SECONDARY = "#9296A2"
-TEXT_DISABLED = "#656975"
+TEXT = "#ECEDEE"
+TEXT_SECONDARY = "#8A9099"
+TEXT_DISABLED = "#565C66"
 
-SUCCESS = "#4CCB91"
-SUCCESS_BG = "#14271F"
-WARNING = "#E8A33D"
-WARNING_BG = "#302719"
-DANGER = "#FF626C"
-DANGER_BG = "#321B20"
-INFO = "#69B9F5"
-INFO_BG = "#172735"
+SUCCESS = "#3DDC84"
+SUCCESS_BG = "#0D1F15"
+WARNING = "#FFB224"
+WARNING_BG = "#261E0E"
+DANGER = "#FF4D57"
+DANGER_BG = "#2A0F13"
+INFO = "#4CC2FF"
+INFO_BG = "#0E202D"
 
-RADIUS_SM = 6
-RADIUS_MD = 8
-RADIUS_PANEL = 10
+RADIUS_SM = 2
+RADIUS_MD = 2
+RADIUS_PANEL = 0
 
 TRANSITION_MS = 150
 
@@ -51,7 +51,9 @@ def _families():
 
 _FAMS = _families()
 
-UI_FONT = "Inter" if "Inter" in _FAMS else "Segoe UI"
+UI_FONT = "Segoe UI" if "Segoe UI" in _FAMS else ("Inter" if "Inter" in _FAMS else "Segoe UI")
+# Bahnschrift (DIN industrial, incluida en Windows 10/11) da carácter a titulares y cifras.
+DISPLAY_FONT = "Bahnschrift" if "Bahnschrift" in _FAMS else UI_FONT
 MONO_FONT = ("JetBrains Mono" if "JetBrains Mono" in _FAMS
              else "Cascadia Mono" if "Cascadia Mono" in _FAMS
              else "Consolas")
@@ -120,7 +122,7 @@ def button_style(kind="secondary"):
         return dict(fg_color=bg, hover_color=BORDER, text_color=TEXT_SECONDARY,
                     corner_radius=RADIUS_SM, font=F_BTN)
     if kind == "destructive":
-        return dict(fg_color=DANGER, hover_color="#FF7A82", text_color=ON_PRIMARY,
+        return dict(fg_color=DANGER, hover_color="#FF6B73", text_color=ON_PRIMARY,
                     corner_radius=RADIUS_SM, font=F_BTN)
     return dict(fg_color=ELEVATED, hover_color=ELEVATED_HOVER, text_color=TEXT,
                 border_width=1, border_color=BORDER, corner_radius=RADIUS_SM, font=F_BTN)
